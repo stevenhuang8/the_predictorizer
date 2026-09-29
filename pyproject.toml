@@ -1,0 +1,30 @@
+[project]
+name = "eco-prediction"
+version = "0.1.0"
+description = "Economic indicator forecasting with walk-forward backtesting"
+readme = "README.md"
+authors = [
+    { name = "stevenhuang8", email = "steven.t.huang8@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "lightgbm>=4.7.0",
+    "pandas>=3.0.6",
+    "psycopg2-binary>=2.9.13",
+    "python-dotenv>=1.2.3",
+    "requests>=2.34.2",
+    "scikit-learn>=1.9.1",
+    "shap>=0.51.0",
+    "statsforecast>=2.0.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]

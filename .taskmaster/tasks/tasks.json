@@ -1,0 +1,393 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": "1",
+        "title": "Install Docker/OrbStack and verify installation",
+        "description": "Install Docker Desktop or OrbStack on macOS to enable containerized PostgreSQL database",
+        "details": "Since the dev machine doesn't have Docker installed yet, install either Docker Desktop (https://docs.docker.com/desktop/install/mac-install/) or OrbStack (lightweight alternative: https://orbstack.dev/). OrbStack is recommended for macOS as it's faster and more resource-efficient. After installation, verify with `docker --version` and `docker ps`. Ensure Docker daemon is running.",
+        "testStrategy": "Run `docker --version` and `docker run hello-world` to confirm Docker is properly installed and can pull/run containers",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Download and install OrbStack on macOS",
+            "description": "Install OrbStack containerization platform on macOS Apple Silicon system",
+            "dependencies": [],
+            "details": "Download OrbStack from https://orbstack.dev/ (recommended for macOS over Docker Desktop due to better performance and lower resource usage on Apple Silicon). Install the .dmg package by dragging OrbStack.app to Applications folder. Launch OrbStack from Applications and complete the initial setup wizard. OrbStack will automatically start its daemon and configure the Docker CLI compatibility layer. This provides both the 'docker' and 'orb' command-line tools.",
+            "status": "done",
+            "testStrategy": "Verify OrbStack is installed by running 'which orb' and 'ls -la /Applications/OrbStack.app' to confirm the application is present",
+            "parentId": "undefined",
+            "updatedAt": "2026-09-28T23:52:48.215Z"
+          },
+          {
+            "id": 2,
+            "title": "Verify Docker CLI is available and daemon is running",
+            "description": "Confirm Docker command-line interface is accessible and the container runtime daemon is operational",
+            "dependencies": [
+              1
+            ],
+            "details": "After OrbStack installation completes, verify the Docker CLI is available in the shell path by running 'docker --version'. This should show Docker version information (OrbStack provides Docker CLI compatibility). Check that the Docker daemon is running with 'docker ps', which should return an empty list of containers without errors. If 'docker' command is not found, may need to restart terminal or add to PATH. OrbStack typically handles PATH configuration automatically.",
+            "status": "done",
+            "testStrategy": "Run 'docker --version' to verify CLI availability and 'docker ps' to confirm daemon is responding (should output empty container list or table headers without errors)",
+            "parentId": "undefined",
+            "updatedAt": "2026-09-28T23:52:48.220Z"
+          },
+          {
+            "id": 3,
+            "title": "Test container functionality with hello-world image",
+            "description": "Pull and run the official Docker hello-world image to validate complete container runtime functionality",
+            "dependencies": [
+              2
+            ],
+            "details": "Execute 'docker run hello-world' to test the full container lifecycle: image pull from Docker Hub, container creation, execution, and cleanup. This command will download the lightweight hello-world image (if not cached), create a container, run it, display a success message, and exit. Success indicates that OrbStack can pull images from registries, create containers, execute processes, and handle container lifecycle properly. This confirms the environment is ready for PostgreSQL containerization.",
+            "status": "done",
+            "testStrategy": "Run 'docker run hello-world' and verify output contains 'Hello from Docker!' message and explanation text. Check that 'docker images' shows hello-world image in local cache after completion.",
+            "parentId": "undefined",
+            "updatedAt": "2026-09-28T23:52:55.420Z"
+          }
+        ],
+        "updatedAt": "2026-09-28T23:52:55.420Z"
+      },
+      {
+        "id": "2",
+        "title": "Initialize Python project with uv and src/ layout",
+        "description": "Set up Python project structure using uv package manager with pyproject.toml and src/ directory layout",
+        "details": "Install uv (https://github.com/astral-sh/uv) via `curl -LsSf https://astral.sh/uv/install.sh | sh`. Initialize project with `uv init --lib`. Create src/eco_prediction/ directory structure. Configure pyproject.toml with dependencies: pandas, statsforecast, lightgbm, shap, scikit-learn, psycopg2-binary (for Postgres), requests (for API calls), python-dotenv. Add dev dependencies: pytest, ruff, mypy. Set Python version to >=3.11. Create src/eco_prediction/__init__.py and basic package structure: src/eco_prediction/{data/, models/, backtest/, utils/}.",
+        "testStrategy": "Run `uv sync` to install dependencies, verify src/ layout exists, confirm `uv run python -c 'import pandas, lightgbm, shap'` succeeds",
+        "priority": "high",
+        "dependencies": [
+          "1"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-09-28T23:58:13.235Z"
+      },
+      {
+        "id": "3",
+        "title": "Create docker-compose.yml for PostgreSQL with persistent storage",
+        "description": "Set up PostgreSQL 16 database in Docker with volume mounts for data persistence and initialization scripts",
+        "details": "Create docker-compose.yml in project root with PostgreSQL 16 service. Configuration: expose port 5432, set POSTGRES_DB=eco_forecast, POSTGRES_USER and POSTGRES_PASSWORD from environment variables. Mount volumes: ./postgres-data for persistence, ./migrations/init for initialization scripts. Include pgAdmin service (optional) for database management. Create .env file template with DB credentials. Add postgres-data/ to .gitignore.",
+        "testStrategy": "Run `docker-compose up -d`, connect with `psql postgresql://user:pass@localhost:5432/eco_forecast`, verify connection succeeds and database is empty",
+        "priority": "high",
+        "dependencies": [
+          "2"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-09-28T23:59:51.016Z"
+      },
+      {
+        "id": "4",
+        "title": "Design and implement core database schema with migration system",
+        "description": "Create PostgreSQL schema for sources, series, observations with vintage tracking, and implement SQL migration framework",
+        "details": "Create migrations/ directory with numbered SQL files (001_initial_schema.sql, etc.). Implement schema:\n\n```sql\nCREATE TABLE sources (\n  id SERIAL PRIMARY KEY,\n  name VARCHAR(100) UNIQUE NOT NULL,\n  url TEXT,\n  description TEXT,\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\nCREATE TABLE series (\n  id SERIAL PRIMARY KEY,\n  source_id INTEGER REFERENCES sources(id),\n  series_id VARCHAR(100) UNIQUE NOT NULL,  -- e.g., 'CPIAUCSL'\n  name TEXT,\n  units VARCHAR(50),\n  frequency VARCHAR(20),  -- monthly, quarterly, etc.\n  seasonal_adjustment VARCHAR(50),\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\nCREATE TABLE observations (\n  id BIGSERIAL PRIMARY KEY,\n  series_id INTEGER REFERENCES series(id),\n  observed_at DATE NOT NULL,\n  as_of DATE NOT NULL,  -- vintage date\n  value NUMERIC,\n  created_at TIMESTAMP DEFAULT NOW(),\n  UNIQUE(series_id, observed_at, as_of)\n);\n\nCREATE INDEX idx_obs_series_observed ON observations(series_id, observed_at);\nCREATE INDEX idx_obs_as_of ON observations(as_of);\n```\n\nCreate Python migration runner in src/eco_prediction/db/migrate.py that tracks applied migrations in a `schema_migrations` table.",
+        "testStrategy": "Run migration script, verify tables exist with `\\dt` in psql, check indexes with `\\di`, insert test data and query by as_of date to verify vintage tracking works",
+        "priority": "high",
+        "dependencies": [
+          "3"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "5",
+        "title": "Implement database connection manager and point-in-time query utilities",
+        "description": "Create PostgreSQL connection pool and helper functions for as_of queries to retrieve historical data vintages",
+        "details": "Create src/eco_prediction/db/connection.py with connection pooling using psycopg2.pool.SimpleConnectionPool. Load credentials from environment variables. Implement context manager for connection/cursor handling. Create src/eco_prediction/db/queries.py with point-in-time query functions:\n\n```python\ndef get_series_value_as_of(conn, series_id: str, observed_date: date, as_of_date: date) -> Optional[float]:\n    \"\"\"Get the value of a series as it was known on as_of_date.\"\"\"\n    query = \"\"\"\n        SELECT value FROM observations o\n        JOIN series s ON o.series_id = s.id\n        WHERE s.series_id = %s\n          AND o.observed_at = %s\n          AND o.as_of <= %s\n        ORDER BY o.as_of DESC\n        LIMIT 1\n    \"\"\"\n    # Returns most recent vintage as of the as_of_date\n```\n\nImplement functions for bulk retrieval and DataFrame conversion.",
+        "testStrategy": "Write unit tests that insert observations with different as_of dates, query point-in-time values, verify correct vintage is retrieved",
+        "priority": "high",
+        "dependencies": [
+          "4"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "6",
+        "title": "Build FRED/ALFRED API client with rate limiting",
+        "description": "Implement Python client for FRED and ALFRED APIs to fetch economic time series and historical vintages",
+        "details": "Create src/eco_prediction/data/fred_client.py using requests library. Register for FRED API key (https://fred.stlouisfed.org/docs/api/api_key.html). Implement:\n\n```python\nclass FREDClient:\n    def __init__(self, api_key: str):\n        self.api_key = api_key\n        self.base_url = 'https://api.stlouisfed.org/fred'\n        self.session = requests.Session()\n    \n    def get_series_observations(self, series_id: str, realtime_start: str = None, realtime_end: str = None):\n        \"\"\"Fetch observations with vintage dates from ALFRED.\"\"\"\n        # Use realtime_start/realtime_end for vintage tracking\n        # https://fred.stlouisfed.org/docs/api/fred/series_observations.html\n    \n    def get_series_info(self, series_id: str):\n        \"\"\"Get metadata: units, frequency, seasonal adjustment.\"\"\"\n```\n\nImplement rate limiting (max 120 requests/minute), retry logic with exponential backoff, and error handling for API failures.",
+        "testStrategy": "Write integration tests that fetch CPIAUCSL series, verify vintage dates are preserved, test rate limiting with mock rapid requests, validate error handling",
+        "priority": "high",
+        "dependencies": [
+          "2"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "7",
+        "title": "Implement data ingestion pipeline for FRED series with vintage storage",
+        "description": "Create ETL pipeline to ingest FRED/ALFRED data into PostgreSQL, preserving all historical revisions",
+        "details": "Create src/eco_prediction/data/ingest.py with functions to:\n1. Fetch series from FRED API with all vintages\n2. Store source metadata in `sources` table (FRED, BLS, etc.)\n3. Store series metadata in `series` table\n4. Store observations with vintage tracking in `observations` table\n\nImplement idempotent upsert logic (ON CONFLICT DO NOTHING) to handle re-runs. Create function to backfill historical vintages by iterating through realtime_start dates. Target series for V1: CPIAUCSL (CPI), UNRATE (unemployment), T10Y2Y and T10Y3M (yield spreads), DCOILWTICO (oil), GASREGW (gas), PPIACO (PPI), wage growth series, ICSA (jobless claims), MICH (inflation expectations), rent indices (CUUR0000SEHA, CUSR0000SEHA).",
+        "testStrategy": "Ingest a small series (e.g., last 2 years of CPIAUCSL), verify observations table contains multiple as_of dates for the same observed_at date, check point-in-time queries return correct vintage",
+        "priority": "high",
+        "dependencies": [
+          "5",
+          "6"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "8",
+        "title": "Backfill historical economic data from 1990 to present",
+        "description": "Run full historical data ingestion for all V1 target series and features from approximately 1990",
+        "details": "Create script src/eco_prediction/scripts/backfill_data.py that orchestrates full historical ingestion. For each series in V1 scope (CPI, unemployment, yield curves, oil, gas, PPI, wages, jobless claims, consumer expectations, rent), fetch data from 1990-01-01 to present with all available vintages. Implement progress tracking, logging, and checkpointing to resume if interrupted. Handle API rate limits gracefully. For ALFRED vintages, may need to fetch monthly snapshots to capture revisions. Estimated time: several hours due to API rate limits.",
+        "testStrategy": "After completion, query database for total observation count, verify each target series has data back to ~1990, spot-check known revised values (e.g., initial vs final CPI releases)",
+        "priority": "medium",
+        "dependencies": [
+          "7"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "9",
+        "title": "Create questions and resolutions schema",
+        "description": "Implement database tables for forecast questions, resolutions, and scoring",
+        "details": "Add migration 002_forecast_schema.sql:\n\n```sql\nCREATE TYPE question_type AS ENUM ('numeric_interval', 'probability');\nCREATE TYPE forecast_target AS ENUM ('cpi_yoy', 'unemployment', 'fomc_decision');\n\nCREATE TABLE questions (\n  id SERIAL PRIMARY KEY,\n  target forecast_target NOT NULL,\n  question_type question_type NOT NULL,\n  horizon_months INTEGER NOT NULL,  -- 1, 3, or 6\n  target_date DATE NOT NULL,  -- when this resolves\n  resolution_rule TEXT,  -- how to determine actual value\n  created_at TIMESTAMP DEFAULT NOW(),\n  UNIQUE(target, target_date, horizon_months)\n);\n\nCREATE TABLE resolutions (\n  id SERIAL PRIMARY KEY,\n  question_id INTEGER REFERENCES questions(id) UNIQUE,\n  actual_value NUMERIC,\n  actual_outcome TEXT,  -- for categorical (cut/hold/hike)\n  resolved_at TIMESTAMP NOT NULL,\n  score_rmse NUMERIC,\n  score_brier NUMERIC,\n  created_at TIMESTAMP DEFAULT NOW()\n);\n```",
+        "testStrategy": "Run migration, insert test questions for upcoming CPI/unemployment releases, verify uniqueness constraints work, test resolution insertion",
+        "priority": "medium",
+        "dependencies": [
+          "4"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "10",
+        "title": "Implement model versioning and feature snapshot schema",
+        "description": "Create database tables to track model versions and feature values used for each forecast",
+        "details": "Add migration 003_model_tracking.sql:\n\n```sql\nCREATE TABLE model_versions (\n  id SERIAL PRIMARY KEY,\n  model_type VARCHAR(50) NOT NULL,  -- 'random_walk', 'arima', 'lightgbm', etc.\n  version_tag VARCHAR(50) NOT NULL,\n  parameters JSONB,\n  training_start DATE,\n  training_end DATE,\n  code_hash VARCHAR(64),  -- git commit or file hash\n  created_at TIMESTAMP DEFAULT NOW(),\n  UNIQUE(model_type, version_tag)\n);\n\nCREATE TABLE feature_snapshots (\n  id SERIAL PRIMARY KEY,\n  snapshot_date DATE NOT NULL,\n  features JSONB NOT NULL,  -- {\"yield_spread_10y2y\": 0.5, \"oil_price\": 80, ...}\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\nCREATE TABLE forecasts (\n  id SERIAL PRIMARY KEY,\n  question_id INTEGER REFERENCES questions(id),\n  model_version_id INTEGER REFERENCES model_versions(id),\n  feature_snapshot_id INTEGER REFERENCES feature_snapshots(id),\n  prediction NUMERIC,  -- point estimate\n  interval_lower NUMERIC,\n  interval_upper NUMERIC,\n  probabilities JSONB,  -- for categorical: {\"cut\": 0.2, \"hold\": 0.7, \"hike\": 0.1}\n  shap_values JSONB,  -- feature attributions\n  rationale TEXT,\n  previous_forecast_id INTEGER REFERENCES forecasts(id),  -- for revisions\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\nCREATE INDEX idx_forecasts_question ON forecasts(question_id);\n```",
+        "testStrategy": "Run migration, insert test model version and feature snapshot, create linked forecast, verify foreign key relationships and JSON storage",
+        "priority": "medium",
+        "dependencies": [
+          "9"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "11",
+        "title": "Build walk-forward backtesting harness",
+        "description": "Implement time-series cross-validation framework with point-in-time data loading for unbiased evaluation",
+        "details": "Create src/eco_prediction/backtest/harness.py:\n\n```python\nclass WalkForwardBacktest:\n    def __init__(self, start_date: date, end_date: date, retrain_frequency: str = 'quarterly'):\n        self.start_date = start_date\n        self.end_date = end_date\n        self.retrain_frequency = retrain_frequency\n    \n    def run(self, model, target: str, horizon_months: int) -> pd.DataFrame:\n        \"\"\"Run walk-forward validation.\n        \n        For each forecast date:\n        1. Load features as of that date (point-in-time)\n        2. Generate forecast\n        3. Wait for resolution\n        4. Score forecast\n        \"\"\"\n        results = []\n        for forecast_date in self.get_forecast_dates():\n            features = self.load_features_as_of(forecast_date)\n            prediction = model.predict(features)\n            actual = self.get_actual_value(forecast_date + relativedelta(months=horizon_months))\n            score = self.score_prediction(prediction, actual)\n            results.append({'date': forecast_date, 'pred': prediction, 'actual': actual, 'score': score})\n        return pd.DataFrame(results)\n```\n\nImplement expanding window (train on all history) and rolling window options. Critical: enforce as_of date constraints to prevent lookahead bias.",
+        "testStrategy": "Run backtest on 2020-2023 data with a simple model, verify no future data leakage by checking feature dates < forecast dates, validate scoring calculations",
+        "priority": "high",
+        "dependencies": [
+          "5",
+          "9"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "12",
+        "title": "Implement baseline models (random walk, historical mean, expert benchmarks)",
+        "description": "Create simple baseline forecasting models that all ML models must beat to justify their complexity",
+        "details": "Create src/eco_prediction/models/baselines.py:\n\n```python\nclass RandomWalkModel:\n    \"\"\"Predicts last known value.\"\"\"\n    def predict(self, features: dict) -> dict:\n        return {'prediction': features['target_last_value'], 'interval': self.naive_interval()}\n\nclass HistoricalMeanModel:\n    \"\"\"Predicts historical average.\"\"\"\n    def fit(self, train_data: pd.DataFrame):\n        self.mean = train_data['target'].mean()\n        self.std = train_data['target'].std()\n    \n    def predict(self, features: dict) -> dict:\n        return {'prediction': self.mean, 'interval': (self.mean - 1.28*self.std, self.mean + 1.28*self.std)}\n\nclass ExpertBenchmark:\n    \"\"\"Fetches external forecasts: Cleveland Fed nowcast, SPF, CME FedWatch.\"\"\"\n    def get_cpi_nowcast(self, as_of_date: date) -> float:\n        # Scrape or API call to Cleveland Fed\n    \n    def get_unemployment_spf(self, as_of_date: date) -> float:\n        # Survey of Professional Forecasters\n```\n\nImplement data fetching for expert benchmarks with caching.",
+        "testStrategy": "Run each baseline on backtest harness, verify random walk returns last value, historical mean is stable, expert benchmark fetches are cached and don't fail",
+        "priority": "high",
+        "dependencies": [
+          "11"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "13",
+        "title": "Implement scoring metrics (RMSE, Brier, interval coverage, calibration)",
+        "description": "Create comprehensive evaluation metrics for both point forecasts and probabilistic predictions",
+        "details": "Create src/eco_prediction/backtest/metrics.py:\n\n```python\ndef rmse(predictions: np.array, actuals: np.array) -> float:\n    return np.sqrt(np.mean((predictions - actuals) ** 2))\n\ndef brier_score(probabilities: dict, outcome: str) -> float:\n    \"\"\"For categorical outcomes (cut/hold/hike).\"\"\"\n    return sum((probabilities[cat] - (1 if cat == outcome else 0))**2 for cat in probabilities)\n\ndef interval_coverage(intervals: list[tuple], actuals: list) -> float:\n    \"\"\"Fraction of actuals within predicted intervals.\"\"\"\n    covered = sum(lower <= actual <= upper for (lower, upper), actual in zip(intervals, actuals))\n    return covered / len(actuals)\n\ndef calibration_curve(probabilities: np.array, outcomes: np.array, n_bins: int = 10):\n    \"\"\"Bin predictions and compute empirical frequencies.\"\"\"\n    # For plotting: predicted prob vs actual frequency\n    from sklearn.calibration import calibration_curve\n    return calibration_curve(outcomes, probabilities, n_bins=n_bins)\n```\n\nImplement visualization functions for calibration curves using matplotlib.",
+        "testStrategy": "Test with synthetic data: perfectly calibrated predictions should have 1:1 calibration curve, 80% intervals should cover ~80% of actuals, Brier score should be 0 for perfect predictions",
+        "priority": "medium",
+        "dependencies": [
+          "11"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "14",
+        "title": "Build feature engineering pipeline for economic indicators",
+        "description": "Create transformations and derived features from raw economic series for ML models",
+        "details": "Create src/eco_prediction/features/engineering.py:\n\n```python\nclass FeatureEngineer:\n    def build_features(self, series_data: dict, as_of_date: date) -> dict:\n        \"\"\"Construct feature vector from raw series.\n        \n        Features:\n        - Yield spreads: T10Y2Y, T10Y3M (already differences)\n        - Price changes: YoY, MoM, 3-month change for oil, gas, PPI\n        - Unemployment: level, first difference, 3-month moving avg\n        - Jobless claims: level, 4-week moving avg, YoY change\n        - Lags: t-1, t-2, t-3 for target variable\n        - Seasonal indicators: month dummies\n        - Trend: months since 1990-01-01\n        \"\"\"\n        features = {}\n        features['yield_spread_10y_2y'] = series_data['T10Y2Y'][-1]\n        features['oil_yoy_change'] = self.yoy_change(series_data['DCOILWTICO'])\n        features['cpi_lag1'] = series_data['CPIAUCSL'][-1] if 'CPIAUCSL' in series_data else None\n        # ... more features\n        return features\n    \n    def yoy_change(self, series: pd.Series) -> float:\n        return (series.iloc[-1] / series.iloc[-13] - 1) * 100 if len(series) >= 13 else None\n```\n\nHandle missing values (forward fill with limits, drop features if too sparse).",
+        "testStrategy": "Build features for a known date, manually verify calculations (e.g., YoY change matches Excel calculation), test with incomplete data to ensure graceful handling",
+        "priority": "medium",
+        "dependencies": [
+          "5"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "15",
+        "title": "Implement statistical forecasting models (ARIMA, exponential smoothing)",
+        "description": "Build time-series statistical models using statsforecast library",
+        "details": "Create src/eco_prediction/models/statistical.py using statsforecast (https://nixtla.github.io/statsforecast/):\n\n```python\nfrom statsforecast import StatsForecast\nfrom statsforecast.models import AutoARIMA, AutoETS\n\nclass ARIMAForecaster:\n    def __init__(self, horizon: int = 3):\n        self.model = AutoARIMA(season_length=12)  # monthly seasonality\n        self.horizon = horizon\n    \n    def fit(self, train_data: pd.DataFrame):\n        # train_data must have columns: unique_id, ds (date), y (target)\n        sf = StatsForecast(models=[self.model], freq='M')\n        sf.fit(train_data)\n        self.fitted_model = sf\n    \n    def predict(self, h: int = None) -> pd.DataFrame:\n        h = h or self.horizon\n        return self.fitted_model.predict(h=h)\n```\n\nImplement AutoETS (exponential smoothing) similarly. Wrap in common interface that matches baseline models.",
+        "testStrategy": "Fit ARIMA on 10 years of CPI data, generate 3-month forecast, verify forecast horizon matches request, compare against statsforecast documentation examples",
+        "priority": "medium",
+        "dependencies": [
+          "11",
+          "14"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "16",
+        "title": "Build LightGBM regression model with hyperparameter tuning",
+        "description": "Implement gradient boosting model for economic forecasting with cross-validated hyperparameter search",
+        "details": "Create src/eco_prediction/models/lightgbm_model.py:\n\n```python\nimport lightgbm as lgb\nfrom sklearn.model_selection import TimeSeriesSplit\n\nclass LightGBMForecaster:\n    def __init__(self, horizon_months: int):\n        self.horizon = horizon_months\n        self.model = None\n        self.feature_names = None\n    \n    def fit(self, X: pd.DataFrame, y: pd.Series):\n        \"\"\"Train with time-series cross-validation.\"\"\"\n        # Hyperparameters to tune: n_estimators, max_depth, learning_rate, min_child_samples\n        tscv = TimeSeriesSplit(n_splits=5)\n        best_params = self.tune_hyperparameters(X, y, tscv)\n        \n        self.model = lgb.LGBMRegressor(**best_params)\n        self.model.fit(X, y)\n        self.feature_names = X.columns.tolist()\n    \n    def predict(self, X: pd.DataFrame) -> np.array:\n        return self.model.predict(X)\n    \n    def tune_hyperparameters(self, X, y, cv):\n        # Use LightGBM's CV or sklearn GridSearchCV/RandomizedSearchCV\n        param_grid = {\n            'n_estimators': [100, 200, 500],\n            'max_depth': [3, 5, 7],\n            'learning_rate': [0.01, 0.05, 0.1]\n        }\n        # ... return best params\n```\n\nEarly stopping to prevent overfitting.",
+        "testStrategy": "Train on CPI data with engineered features, verify hyperparameter tuning runs without errors, check feature importance is populated, compare RMSE against random walk baseline on validation set",
+        "priority": "medium",
+        "dependencies": [
+          "14",
+          "15"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "17",
+        "title": "Implement SHAP explainability and store feature attributions",
+        "description": "Add SHAP value computation for LightGBM predictions to explain which features drove each forecast",
+        "details": "Create src/eco_prediction/models/explainability.py:\n\n```python\nimport shap\n\nclass SHAPExplainer:\n    def __init__(self, model):\n        # Use TreeExplainer for LightGBM\n        self.explainer = shap.TreeExplainer(model)\n    \n    def explain_prediction(self, X: pd.DataFrame) -> dict:\n        \"\"\"Return SHAP values for a single prediction.\"\"\"\n        shap_values = self.explainer.shap_values(X)\n        \n        # Convert to dict for JSON storage\n        if X.shape[0] == 1:\n            feature_contributions = {feat: float(val) for feat, val in zip(X.columns, shap_values[0])}\n        else:\n            feature_contributions = {feat: shap_values[:, i].tolist() for i, feat in enumerate(X.columns)}\n        \n        return {\n            'shap_values': feature_contributions,\n            'base_value': float(self.explainer.expected_value)\n        }\n```\n\nModify forecasting pipeline to compute and store SHAP values in forecasts.shap_values JSONB column.",
+        "testStrategy": "Generate forecast with LightGBM, compute SHAP values, verify they sum to (prediction - base_value), check top features make economic sense, store and retrieve from database",
+        "priority": "medium",
+        "dependencies": [
+          "16"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "18",
+        "title": "Implement probability calibration for interval and categorical forecasts",
+        "description": "Apply isotonic regression and conformal prediction to calibrate forecast uncertainties",
+        "details": "Create src/eco_prediction/models/calibration.py:\n\n```python\nfrom sklearn.calibration import CalibratedClassifierCV\nfrom sklearn.isotonic import IsotonicRegression\n\nclass IntervalCalibrator:\n    \"\"\"Conformal prediction for calibrated intervals.\"\"\"\n    def __init__(self, coverage: float = 0.8):\n        self.coverage = coverage\n        self.quantile = None\n    \n    def fit(self, residuals: np.array):\n        \"\"\"Fit on validation residuals.\"\"\"\n        self.quantile = np.quantile(np.abs(residuals), self.coverage)\n    \n    def predict_interval(self, point_prediction: float) -> tuple:\n        return (point_prediction - self.quantile, point_prediction + self.quantile)\n\nclass ProbabilityCalibrator:\n    \"\"\"Isotonic/Platt scaling for FOMC probabilities.\"\"\"\n    def __init__(self, method: str = 'isotonic'):\n        self.method = method\n        self.calibrator = IsotonicRegression(out_of_bounds='clip') if method == 'isotonic' else None\n    \n    def fit(self, predicted_probs: np.array, actual_outcomes: np.array):\n        self.calibrator.fit(predicted_probs, actual_outcomes)\n    \n    def calibrate(self, probs: np.array) -> np.array:\n        return self.calibrator.predict(probs)\n```\n\nIntegrate into backtest: fit calibrator on fold N, apply to fold N+1.",
+        "testStrategy": "Simulate miscalibrated predictions, apply calibration, verify calibration curve improves (closer to diagonal), test 80% intervals achieve ~80% coverage on validation set",
+        "priority": "medium",
+        "dependencies": [
+          "16",
+          "13"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "19",
+        "title": "Create comprehensive model comparison and validation report",
+        "description": "Run walk-forward backtest comparing all models (baselines, statistical, ML) and generate performance report",
+        "details": "Create src/eco_prediction/scripts/model_comparison.py that:\n1. Runs walk-forward backtest for each model (random walk, historical mean, ARIMA, ETS, LightGBM) on each target (CPI, unemployment) at each horizon (1, 3, 6 months)\n2. Computes all metrics: RMSE, MAE, interval coverage, calibration\n3. Generates comparison tables and plots:\n   - RMSE by model and horizon\n   - Calibration curves for each model\n   - Forecast vs actual time series plots\n   - Feature importance from LightGBM + SHAP\n4. Saves results to results/ directory as JSON and HTML report\n\nUse 2015-2023 as backtest period (2015-2019 for initial training, 2020-2023 for walk-forward evaluation).",
+        "testStrategy": "Run full comparison, verify LightGBM beats random walk on 3-month CPI RMSE (success criteria), check all models generate forecasts without errors, review HTML report for reasonableness",
+        "priority": "medium",
+        "dependencies": [
+          "12",
+          "15",
+          "16",
+          "18",
+          "13"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "20",
+        "title": "Implement post-mortem schema and categorization system",
+        "description": "Create database table and classification logic for analyzing forecast errors",
+        "details": "Add migration 004_postmortem.sql:\n\n```sql\nCREATE TYPE miss_category AS ENUM ('bad_data', 'bad_model', 'regime_change', 'expected_variance');\n\nCREATE TABLE postmortems (\n  id SERIAL PRIMARY KEY,\n  forecast_id INTEGER REFERENCES forecasts(id) UNIQUE,\n  miss_category miss_category,\n  notes TEXT,\n  revised_data_impact NUMERIC,  -- how much error was due to data revisions\n  created_at TIMESTAMP DEFAULT NOW()\n);\n```\n\nCreate src/eco_prediction/postmortem/classifier.py with heuristics:\n- Bad data: actual value revised significantly after resolution\n- Bad model: SHAP values show model ignored strong signal\n- Regime change: unprecedented event (COVID, financial crisis)\n- Expected variance: error within predicted interval",
+        "testStrategy": "Run migration, manually classify a few test forecasts, verify categorization logic flags data revisions correctly",
+        "priority": "low",
+        "dependencies": [
+          "10"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "21",
+        "title": "Build FOMC rate decision probability forecaster",
+        "description": "Implement model for cut/hold/hike probabilities using market data and economic indicators",
+        "details": "Create src/eco_prediction/models/fomc_model.py:\n\n```python\nclass FOMCForecaster:\n    \"\"\"Predict FOMC rate decision probabilities.\"\"\"\n    def __init__(self):\n        self.model = lgb.LGBMClassifier(objective='multiclass', num_class=3)\n    \n    def fit(self, X: pd.DataFrame, y: pd.Series):\n        \"\"\"y is categorical: 'cut', 'hold', 'hike'.\"\"\"\n        # Features: unemployment change, CPI YoY, current fed funds rate,\n        # yield curve, jobless claims, previous decision\n        self.model.fit(X, y)\n    \n    def predict_proba(self, X: pd.DataFrame) -> dict:\n        probs = self.model.predict_proba(X)[0]\n        return {'cut': probs[0], 'hold': probs[1], 'hike': probs[2]}\n```\n\nBenchmark against CME FedWatch (fetch via web scraping or API if available). Historical FOMC decisions available from FRED (DFEDTARU, DFEDTAR).",
+        "testStrategy": "Train on 2015-2023 FOMC decisions, predict 2024 meetings, compare Brier score to naive baseline (always predict 'hold'), verify probabilities sum to 1.0",
+        "priority": "medium",
+        "dependencies": [
+          "16",
+          "18"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "22",
+        "title": "Design and implement live forecasting scheduler",
+        "description": "Create automated system to generate forecasts on economic data release schedule",
+        "details": "Research scheduling options: cron (simple, built-in), Trigger.dev (cloud-based, good observability), or Inngest (durable, good for complex workflows). For V1, recommend starting with simple cron script.\n\nCreate src/eco_prediction/scheduler/forecast_job.py:\n```python\ndef generate_forecasts():\n    \"\"\"Run on first business day of each month.\"\"\"\n    today = date.today()\n    \n    # Refresh data from FRED\n    run_data_ingestion()\n    \n    # Generate questions for next 1, 3, 6 months\n    questions = create_forecast_questions(today)\n    \n    # For each question, run all models\n    for question in questions:\n        features = build_features_as_of(today)\n        for model in [lightgbm_model, arima_model]:\n            forecast = model.predict(features)\n            store_forecast(question, model, features, forecast)\n```\n\nCreate crontab entry: `0 9 1 * * /path/to/venv/python forecast_job.py` (9 AM on 1st of month).",
+        "testStrategy": "Run forecast_job manually, verify forecasts are created in database with correct dates, check feature snapshots are stored, simulate monthly run and verify no duplicates",
+        "priority": "medium",
+        "dependencies": [
+          "10",
+          "16",
+          "21"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "23",
+        "title": "Implement resolution job and automated scoring",
+        "description": "Create automated system to resolve forecasts when actual data becomes available and compute scores",
+        "details": "Create src/eco_prediction/scheduler/resolution_job.py:\n\n```python\ndef resolve_forecasts():\n    \"\"\"Check for questions whose resolution date has passed.\"\"\"\n    today = date.today()\n    \n    # Refresh latest data\n    run_data_ingestion()\n    \n    # Find unresolved questions past resolution date\n    unresolved = get_unresolved_questions(before_date=today)\n    \n    for question in unresolved:\n        # Fetch actual value from database\n        actual = get_actual_value(question.target, question.target_date)\n        \n        if actual is None:\n            continue  # Data not yet available\n        \n        # Resolve question\n        create_resolution(question.id, actual)\n        \n        # Score all forecasts for this question\n        forecasts = get_forecasts_for_question(question.id)\n        for forecast in forecasts:\n            score = compute_score(forecast, actual)\n            update_forecast_score(forecast.id, score)\n```\n\nRun daily via cron to catch releases as soon as data available.",
+        "testStrategy": "Create test question with past resolution date, run resolution job, verify resolution and scores are computed, check edge case where data not yet available",
+        "priority": "medium",
+        "dependencies": [
+          "22"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "24",
+        "title": "Initialize Next.js frontend with dashboard placeholder",
+        "description": "Set up Next.js 14 project structure with TypeScript and create placeholder dashboard pages",
+        "details": "Create web/ directory in project root. Initialize Next.js with `npx create-next-app@latest web --typescript --tailwind --app --no-src-dir`. Configure:\n- App Router (app/ directory)\n- TypeScript\n- Tailwind CSS for styling\n- ESLint + Prettier\n\nCreate placeholder pages:\n- app/page.tsx: Landing page with project description\n- app/forecasts/page.tsx: \"Coming soon\" for forecast dashboard\n- app/track-record/page.tsx: \"Coming soon\" for calibration tracking\n\nAdd to .gitignore: web/.next/, web/node_modules/. Create web/.env.local.example with DATABASE_URL placeholder.\n\nNote: Full dashboard implementation deferred to Phase 4; this task just sets up the foundation.",
+        "testStrategy": "Run `npm run dev` in web/ directory, verify Next.js dev server starts, visit localhost:3000 and see placeholder pages, verify TypeScript compilation works",
+        "priority": "low",
+        "dependencies": [
+          "1"
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": "25",
+        "title": "Create CLI tool for manual forecast generation and inspection",
+        "description": "Build command-line interface for developers to generate forecasts, view results, and inspect model state",
+        "details": "Create src/eco_prediction/cli.py using argparse or Click:\n\n```python\nimport click\n\n@click.group()\ndef cli():\n    pass\n\n@cli.command()\n@click.option('--target', type=click.Choice(['cpi', 'unemployment', 'fomc']))\n@click.option('--horizon', type=int, default=3)\ndef forecast(target, horizon):\n    \"\"\"Generate a forecast for target at given horizon.\"\"\"\n    # Load model, build features, predict, display result\n    click.echo(f\"Forecasting {target} at {horizon} months...\")\n\n@cli.command()\n@click.option('--question-id', type=int)\ndef inspect(question_id):\n    \"\"\"Show all forecasts and scores for a question.\"\"\"\n    # Query database, display table\n\n@cli.command()\ndef backtest():\n    \"\"\"Run full backtest suite.\"\"\"\n    # Trigger model comparison script\n\nif __name__ == '__main__':\n    cli()\n```\n\nInstall as script in pyproject.toml: `[project.scripts] eco-forecast = \"eco_prediction.cli:cli\"`",
+        "testStrategy": "Run `uv run eco-forecast forecast --target cpi --horizon 3`, verify it generates forecast and displays result, test inspect and backtest commands",
+        "priority": "low",
+        "dependencies": [
+          "16",
+          "21",
+          "23"
+        ],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-09-28T23:59:51.019Z",
+      "taskCount": 25,
+      "completedCount": 3,
+      "tags": [
+        "master"
+      ]
+    }
+  }
+}
