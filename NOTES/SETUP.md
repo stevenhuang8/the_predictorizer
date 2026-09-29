@@ -12,6 +12,8 @@ set -a; . ./.env.local; set +a         # load the database settings into your sh
 psql "$DATABASE_URL"                   # connect (note: port 5433, not 5432)
 uv sync                                # install or refresh Python dependencies
 uv run pytest / ruff check src / mypy src
+uv run python -m eco_prediction.db.migrate            # apply pending migrations (task 4)
+uv run python -m eco_prediction.db.migrate --status   # list applied/pending
 ```
 
 ---
