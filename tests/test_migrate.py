@@ -1,59 +1,15 @@
-"""Integration tests for the migration runner.
-
-Each test gets a throwaway database on the Postgres from docker-compose, so the
-real eco_forecast database is never touched. Skipped if Postgres isn't reachable.
-"""
+"""Integration tests for the migration runner (database fixtures in conftest.py)."""
 
 from __future__ import annotations
 
-import os
-import uuid
-from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 
 import psycopg2
 import pytest
-from dotenv import load_dotenv
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from psycopg2.extensions import connection as Connection
 
 from eco_prediction.db.migrate import MIGRATIONS_DIR, MigrationError, discover, migrate
-
-load_dotenv()
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-
-
-def _admin_conn() -> Connection:
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-    return conn
-
-
-@pytest.fixture
-def conn() -> Iterator[Connection]:
-    try:
-        admin = _admin_conn()
-    except psycopg2.OperationalError as exc:
-        pytest.skip(f"Postgres not reachable: {exc}")
-    name = f"test_{uuid.uuid4().hex[:12]}"
-    with admin.cursor() as cur:
-        cur.execute(f"CREATE DATABASE {name}")
-    params = admin.get_dsn_parameters()
-    test_conn = psycopg2.connect(
-        dbname=name,
-        user=params["user"],
-        host=params["host"],
-        port=params["port"],
-        password=admin.info.password,
-    )
-    try:
-        yield test_conn
-    finally:
-        test_conn.close()
-        with admin.cursor() as cur:
-            cur.execute(f"DROP DATABASE {name}")
-        admin.close()
 
 
 def test_discover_ignores_init_subdir() -> None:

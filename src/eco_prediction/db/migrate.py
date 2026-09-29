@@ -14,15 +14,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import psycopg2
-from dotenv import load_dotenv
 from psycopg2.extensions import connection as Connection
+
+from eco_prediction.db.connection import ConfigError, database_url
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
 _FILENAME_RE = re.compile(r"^(\d{3,})_([a-z0-9_]+)\.sql$")
@@ -129,11 +129,10 @@ def migrate(conn: Connection, directory: Path = MIGRATIONS_DIR) -> list[Migratio
 
 
 def connect() -> Connection:
-    load_dotenv()
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise MigrationError("DATABASE_URL is not set (see .env.example)")
-    return psycopg2.connect(url)
+    try:
+        return psycopg2.connect(database_url())
+    except ConfigError as exc:
+        raise MigrationError(str(exc)) from exc
 
 
 def main(argv: list[str] | None = None) -> int:

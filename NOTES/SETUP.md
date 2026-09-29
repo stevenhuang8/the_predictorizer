@@ -14,6 +14,8 @@ uv sync                                # install or refresh Python dependencies
 uv run pytest / ruff check src / mypy src
 uv run python -m eco_prediction.db.migrate            # apply pending migrations (task 4)
 uv run python -m eco_prediction.db.migrate --status   # list applied/pending
+# Task 5: `with eco_prediction.db.connection.connection() as conn:` borrows a pooled
+# connection (commit/rollback handled); point-in-time reads are in eco_prediction.db.queries.
 ```
 
 ---
