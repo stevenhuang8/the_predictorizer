@@ -37,3 +37,6 @@ dist/
 
 # Local Postgres data
 postgres-data/
+
+# Downloaded benchmark data
+data/cache/
