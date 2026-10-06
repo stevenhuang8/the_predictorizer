@@ -34,6 +34,7 @@ from typing import Any, Literal, Protocol
 
 import pandas as pd
 
+from eco_prediction.backtest import metrics
 from eco_prediction.backtest.data import (
     TARGETS,
     LookaheadError,
@@ -220,16 +221,20 @@ def score_prediction(forecast: Forecast, actual: float | None) -> dict[str, Any]
 def summarize(results: pd.DataFrame) -> dict[str, float | int | None]:
     """Aggregate scores over the resolved forecasts of a `run`."""
     resolved = results[results["actual"].notna()]
-    intervals = resolved["in_interval"].dropna()
+    with_interval = resolved[resolved["lower"].notna() & resolved["upper"].notna()]
     n = len(resolved)
+    pred, act = resolved["prediction"], resolved["actual"]
     return {
         "n_forecasts": len(results),
         "n_resolved": n,
-        "rmse": math.sqrt(resolved["squared_error"].mean()) if n else None,
-        "mae": float(resolved["abs_error"].mean()) if n else None,
-        "bias": float(resolved["error"].mean()) if n else None,
-        "interval_coverage": float(intervals.astype(bool).mean())
-        if len(intervals)
+        "rmse": metrics.rmse(pred, act) if n else None,
+        "mae": metrics.mae(pred, act) if n else None,
+        "bias": metrics.bias(pred, act) if n else None,
+        "interval_coverage": metrics.interval_coverage(
+            zip(with_interval["lower"], with_interval["upper"]),
+            with_interval["actual"],
+        )
+        if len(with_interval)
         else None,
     }
 
