@@ -11,15 +11,28 @@ reads the database once per series rather than once per forecast date.
 `PointInTimeData` is the only way models see data: it returns, for each
 period, the latest vintage published on or before its cutoff, and records the
 latest `as_of` it served so the harness can prove nothing later leaked.
+
+ALFRED's vintages of many series start years after the series does (2009-2014
+for oil, gasoline, claims and the yield spreads), so a strict read before the
+first vintage finds nothing. `VintageStore(..., backfill=True)` treats each
+period in a series' first vintage as published `release_lag` days after the
+period date, if that is earlier than the first vintage. The lag is the 90th
+percentile delay, rounded up, of periods first published after the first
+vintage. That is exact for unrevised series (market prices) and leaks only
+later revisions for revised ones. Later vintages keep their real dates.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date
 
 import pandas as pd
+
+# Quantile of observed release delays used as a series' backfill lag.
+RELEASE_LAG_QUANTILE = 0.9
 
 from eco_prediction.db.connection import connection
 from eco_prediction.db.queries import get_vintage_history
@@ -68,33 +81,89 @@ def _empty_known() -> pd.DataFrame:
     )
 
 
+def release_lag(history: pd.DataFrame) -> int | None:
+    """Days from period date to first release, for periods newer than the first vintage.
+
+    Returns the RELEASE_LAG_QUANTILE of those delays, rounded up, or None if
+    there are no newer periods. Older history added by a later vintage is not
+    a release and is ignored.
+    """
+    if history.empty:
+        return None
+    first_vintage = history["as_of"].min()
+    newest_in_first = history.loc[
+        history["as_of"] == first_vintage, "observed_at"
+    ].max()
+    released = history[history["value"].notna()].groupby("observed_at")["as_of"].min()
+    later = released[released.index > newest_in_first]
+    if later.empty:
+        return None
+    delays = (later - later.index.to_series(index=later.index)).dt.days
+    return math.ceil(delays.quantile(RELEASE_LAG_QUANTILE))
+
+
+def backfill_first_vintage(history: pd.DataFrame, lag_days: int) -> pd.DataFrame:
+    """Date each first-vintage row `lag_days` after its period, if that is earlier."""
+    if history.empty:
+        return history
+    first_vintage = history["as_of"].min()
+    assumed = history["observed_at"] + pd.Timedelta(days=lag_days)
+    earlier = (history["as_of"] == first_vintage) & (assumed < first_vintage)
+    out = history.copy()
+    out.loc[earlier, "as_of"] = assumed[earlier]
+    return out.sort_values(["observed_at", "as_of"], ignore_index=True)
+
+
 class VintageStore:
     """Every vintage of each series, loaded once and queried as of any date.
 
     Pass `histories` (series_id -> frame with observed_at, as_of, value, as
     returned by `get_vintage_history`) directly, or a `loader` that fetches one
     series on first use.
+
+    `backfill=True` dates periods older than a series' first vintage by its
+    release lag (see the module docstring). Lags are estimated per series, or
+    taken from `release_lags` (days); the lags used are in `self.release_lags`.
+    A series whose lag can't be estimated is left as it is.
     """
 
     def __init__(
         self,
         histories: Mapping[str, pd.DataFrame] | None = None,
         loader: Callable[[str], pd.DataFrame] | None = None,
+        *,
+        backfill: bool = False,
+        release_lags: Mapping[str, int] | None = None,
     ) -> None:
         self._loader = loader
+        self.backfill = backfill
+        self.release_lags: dict[str, int] = dict(release_lags or {})
         self._histories: dict[str, pd.DataFrame] = {}
         for series_id, frame in (histories or {}).items():
-            self._histories[series_id] = self._normalize(frame)
+            self._histories[series_id] = self._prepare(series_id, frame)
 
     @classmethod
-    def from_db(cls) -> VintageStore:
+    def from_db(
+        cls, *, backfill: bool = False, release_lags: Mapping[str, int] | None = None
+    ) -> VintageStore:
         """Load series from the pooled database connection as they are needed."""
 
         def load(series_id: str) -> pd.DataFrame:
             with connection() as conn:
                 return get_vintage_history(conn, series_id)
 
-        return cls(loader=load)
+        return cls(loader=load, backfill=backfill, release_lags=release_lags)
+
+    def _prepare(self, series_id: str, frame: pd.DataFrame) -> pd.DataFrame:
+        history = self._normalize(frame)
+        if not self.backfill:
+            return history
+        if series_id not in self.release_lags:
+            lag = release_lag(history)
+            if lag is None:
+                return history
+            self.release_lags[series_id] = lag
+        return backfill_first_vintage(history, self.release_lags[series_id])
 
     @staticmethod
     def _normalize(frame: pd.DataFrame) -> pd.DataFrame:
@@ -111,7 +180,7 @@ class VintageStore:
         """All vintages of a series, sorted by (observed_at, as_of). Empty if unknown."""
         if series_id not in self._histories:
             raw = self._loader(series_id) if self._loader else _empty_known()
-            self._histories[series_id] = self._normalize(raw)
+            self._histories[series_id] = self._prepare(series_id, raw)
         return self._histories[series_id]
 
     def known(self, series_id: str, cutoff: date) -> pd.DataFrame:

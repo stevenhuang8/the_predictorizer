@@ -19,6 +19,8 @@ from eco_prediction.backtest.data import (
     TARGETS,
     PointInTimeData,
     VintageStore,
+    backfill_first_vintage,
+    release_lag,
 )
 from eco_prediction.backtest.harness import (
     Forecast,
@@ -269,6 +271,80 @@ def test_missing_first_print_is_not_a_release() -> None:
     )
     s = VintageStore({"UNRATE": frame})
     assert s.first_release("UNRATE", date(2020, 1, 1)) == date(2020, 3, 6)
+
+
+FIRST_VINTAGE = pd.Timestamp("2014-01-27")
+
+
+def late_vintages() -> pd.DataFrame:
+    """A series whose ALFRED vintages start on 2014-01-27, like the yield spreads.
+
+    The first vintage holds 2010-2013. Later periods are released 40 days
+    after the period date (one outlier at 100). A 2015 vintage adds 2005-2009
+    history and revises June 2012.
+    """
+    rows = [
+        (p, FIRST_VINTAGE, 1.0) for p in pd.date_range("2010-01", "2013-12", freq="MS")
+    ]
+    for i, p in enumerate(pd.date_range("2014-01", "2014-12", freq="MS")):
+        rows.append((p, p + pd.Timedelta(days=100 if i == 5 else 40), 2.0))
+    rows += [
+        (p, pd.Timestamp("2015-06-01"), 0.5)
+        for p in pd.date_range("2005-01", "2009-12", freq="MS")
+    ]
+    rows.append((pd.Timestamp("2012-06-01"), pd.Timestamp("2015-01-01"), 9.0))
+    return pd.DataFrame(rows, columns=["observed_at", "as_of", "value"])
+
+
+def test_release_lag_uses_new_periods_only() -> None:
+    # The 2005-2009 history (released years late) and the 100-day outlier don't count.
+    assert release_lag(late_vintages()) == 40
+    only_first = late_vintages()
+    only_first = only_first[only_first["as_of"] == FIRST_VINTAGE]
+    assert release_lag(only_first) is None
+
+
+def test_backfill_dates_first_vintage_rows_by_release_lag() -> None:
+    out = backfill_first_vintage(late_vintages(), 60).set_index(
+        ["observed_at", "value"]
+    )
+    as_of = out["as_of"]
+    assert as_of[(pd.Timestamp("2013-11-01"), 1.0)] == pd.Timestamp("2013-12-31")
+    # Dec 1 + 60 days is after the first vintage, so the row is not moved later.
+    assert as_of[(pd.Timestamp("2013-12-01"), 1.0)] == FIRST_VINTAGE
+    assert as_of[(pd.Timestamp("2012-06-01"), 9.0)] == pd.Timestamp("2015-01-01")
+    assert as_of[(pd.Timestamp("2005-01-01"), 0.5)] == pd.Timestamp("2015-06-01")
+
+
+def test_backfilled_store_fills_only_the_years_before_the_first_vintage() -> None:
+    strict = VintageStore({"T10Y2Y": late_vintages()})
+    filled = VintageStore({"T10Y2Y": late_vintages()}, backfill=True)
+    assert filled.release_lags == {"T10Y2Y": 40}
+    assert strict.known("T10Y2Y", date(2012, 12, 31)).empty
+    known = filled.known("T10Y2Y", date(2012, 12, 31)).set_index("observed_at")
+    assert known.index[-1] == pd.Timestamp("2012-11-01")  # December not out yet
+    assert known.loc["2012-06-01", "value"] == 1.0  # not the 2015 revision
+    # After the first vintage both serve the same values; only old rows' as_of differ.
+    after = date(2014, 6, 30)
+    columns = ["observed_at", "value"]
+    pd.testing.assert_frame_equal(
+        strict.known("T10Y2Y", after)[columns].reset_index(drop=True),
+        filled.known("T10Y2Y", after)[columns].reset_index(drop=True),
+    )
+
+
+def test_backfill_lag_override_and_unestimable_series() -> None:
+    s = VintageStore(
+        {"T10Y2Y": late_vintages()}, backfill=True, release_lags={"T10Y2Y": 400}
+    )
+    known = s.known("T10Y2Y", date(2012, 12, 31))
+    assert known["observed_at"].iloc[-1] == pd.Timestamp("2011-11-01")  # + 400 days
+    frame = late_vintages()
+    first_only = VintageStore(
+        {"X": frame[frame["as_of"] == FIRST_VINTAGE]}, backfill=True
+    )
+    assert first_only.release_lags == {}
+    assert first_only.known("X", date(2013, 12, 31)).empty
 
 
 @pytest.fixture
