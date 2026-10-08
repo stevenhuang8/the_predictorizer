@@ -189,8 +189,14 @@ class LightGBMModel:
             np.concatenate(residuals),
         )
 
-    def predict(self, data: PointInTimeData, target_period: date) -> Forecast:
-        if self.model is None or self.residual_bounds is None:
+    def prediction_inputs(
+        self, data: PointInTimeData, target_period: date
+    ) -> tuple[pd.DataFrame, float]:
+        """The feature row the model sees, and the offset added to its output.
+
+        The offset is the latest known target value with `predict_change`, else 0.
+        """
+        if self.model is None:
             raise NotFittedError("call fit() first")
         steps = months_between(origin(data.cutoff), target_period)
         if steps != self.horizon:
@@ -198,13 +204,19 @@ class LightGBMModel:
                 f"this model forecasts {self.horizon} months ahead; "
                 f"{target_period} is {steps} months after {origin(data.cutoff)}"
             )
-        row = self.features.build_matrix(data, [data.cutoff])
-        point = float(self.model.predict(row[self.feature_names])[0])
-        if self.predict_change:
-            latest = data.target_history().dropna()
-            if latest.empty:
-                raise ValueError(f"no {data.target.name} data known by {data.cutoff}")
-            point += float(latest.iloc[-1])
+        row = self.features.build_matrix(data, [data.cutoff])[self.feature_names]
+        if not self.predict_change:
+            return row, 0.0
+        latest = data.target_history().dropna()
+        if latest.empty:
+            raise ValueError(f"no {data.target.name} data known by {data.cutoff}")
+        return row, float(latest.iloc[-1])
+
+    def predict(self, data: PointInTimeData, target_period: date) -> Forecast:
+        if self.model is None or self.residual_bounds is None:
+            raise NotFittedError("call fit() first")
+        row, offset = self.prediction_inputs(data, target_period)
+        point = offset + float(self.model.predict(row)[0])
         low, high = self.residual_bounds
         return Forecast(point, point + low, point + high)
 
