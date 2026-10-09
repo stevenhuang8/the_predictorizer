@@ -249,7 +249,7 @@ Checks: `uv run pytest`, `uv run ruff check src`, `uv run mypy src`.
 | Decision | Why | Cost |
 |---|---|---|
 | **Store every data vintage** instead of just the latest values | Backtests can't secretly use revised data, which makes them honest | Much more data, and every query has to pick the right version |
-| **Score against the first release**, not revised data | That's what was known when the forecast resolved | A forecast can be "wrong" only because the first number was later revised. The post-mortem tags these as `bad_data`. |
+| **Score against the first release**, not revised data | That's what was known when the forecast resolved | A forecast can be "wrong" only because the first number was later revised. The post-mortem tags these as `bad_data`, and score summaries also report `rmse_latest` / `mae_latest` / `bias_latest` against the revised value as a diagnostic. |
 | **Self-hosted Postgres with raw SQL migrations** instead of a managed service or an ORM | Full control and a learning goal: connections, indexes and backups handled directly | More code to maintain, and no hosted backups |
 | **Models build their own point-in-time training rows** instead of a plain `fit(X, y)` | Lookahead is impossible by design, and backtests and live runs share one code path | A custom interface that's slower than training once on one big table |
 | **LightGBM predicts the *change* from today**, not the level | Trees can't extrapolate beyond levels they've seen, but changes stay in a familiar range | Still hasn't beaten the random walk at 3 months |

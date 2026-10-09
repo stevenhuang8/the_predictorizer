@@ -12,7 +12,8 @@ A question resolves once its answer has been published by the run date:
 - CPI YoY and unemployment: the target month's **first release**, as in the
   backtest harness (`harness.actual_value`), so live and backtest scores are
   comparable; later revisions don't change a resolution (`actual_as_of`
-  records the vintage, for Task 20's post-mortems);
+  records the vintage, for Task 20's post-mortems). Each run also refreshes
+  `latest_value`, the answer as most recently revised, for diagnostics only;
 - FOMC: the decision, once the target the day after the meeting is published.
 
 Every forecast of a resolved question is then scored, live and backtest:
@@ -21,7 +22,11 @@ Every forecast of a resolved question is then scored, live and backtest:
 to an already resolved question are scored on the next run. Runs are safe to
 repeat: resolved questions and scored forecasts are skipped.
 
-`score_summary` aggregates the scores by target, horizon and model. Monthly
+`score_summary` aggregates the scores by target, horizon and model, with
+`rmse_latest`, `mae_latest` and `bias_latest` alongside: the same errors
+against the latest revised value. The gap shows how much revisions matter,
+and whether a model tracks the revised value better than the first print.
+They are diagnostics; the first-release scores are the official ones. Monthly
 questions (`horizon_months`) and pre-meeting FOMC questions (`lead_days`) are
 separate rows, so week-ahead and months-ahead accuracy are never mixed.
 """
@@ -54,6 +59,8 @@ from eco_prediction.db.connection import ConfigError, connection
 from eco_prediction.db.resolutions import (
     OpenQuestion,
     UnscoredForecast,
+    numeric_resolutions,
+    save_latest,
     save_resolution,
     save_score,
     scored_forecasts,
@@ -80,6 +87,7 @@ class ResolutionResult:
     resolved: list[int] = field(default_factory=list)  # question ids
     still_open: int = 0
     scored: int = 0
+    latest_refreshed: int = 0
 
 
 @dataclass(frozen=True)
@@ -153,14 +161,36 @@ def resolve_and_score(
     for forecast in unscored_forecasts(conn):
         save_score(conn, forecast.id, **score(forecast))  # type: ignore[arg-type]
         result.scored += 1
+    result.latest_refreshed = refresh_latest(conn, store)
     conn.commit()
     log.info(
-        "Resolution: %d questions resolved, %d still open, %d forecasts scored",
+        "Resolution: %d questions resolved, %d still open, %d forecasts scored, "
+        "%d latest values refreshed",
         len(result.resolved),
         result.still_open,
         result.scored,
+        result.latest_refreshed,
     )
     return result
+
+
+def refresh_latest(conn: Connection, store: VintageStore) -> int:
+    """Store each resolved numeric question's latest value; returns how many changed.
+
+    Questions whose series has no vintage newer than the stored one are skipped.
+    """
+    refreshed = 0
+    for question in numeric_resolutions(conn):
+        target = TARGETS[question.target]
+        newest = store.latest_vintage(target.series_id)
+        if newest is None or question.latest_as_of == newest:
+            continue
+        value, vintage = actual_value(store, target, question.target_date, "latest")
+        if value is None or vintage is None:
+            continue
+        save_latest(conn, question.question_id, value=value, as_of=vintage)
+        refreshed += 1
+    return refreshed
 
 
 def _interval_score(row: pd.Series) -> float:
@@ -175,16 +205,23 @@ def _interval_score(row: pd.Series) -> float:
     )
 
 
+def _rmse(errors: pd.Series) -> float:
+    return float(np.sqrt(np.mean(errors**2))) if errors.notna().any() else math.nan
+
+
 def score_summary(scored: pd.DataFrame) -> pd.DataFrame:
     """Scores by target, horizon (months or lead days) and model.
 
     Columns: n, rmse, mae, bias, coverage, interval_score (numeric) and
-    brier (FOMC); NaN where they don't apply. Backtest and live forecasts
-    are separate rows when both are present.
+    brier (FOMC); NaN where they don't apply. rmse_latest, mae_latest and
+    bias_latest score the same forecasts against the latest revised value
+    (diagnostic only). Backtest and live forecasts are separate rows when both
+    are present.
     """
     columns = [
         "target", "horizon", "model_type", "is_backtest", "n", "rmse", "mae",
-        "bias", "coverage", "interval_score", "brier",
+        "bias", "coverage", "interval_score", "brier", "rmse_latest",
+        "mae_latest", "bias_latest",
     ]  # fmt: skip
     if scored.empty:
         return pd.DataFrame(columns=columns)
@@ -195,20 +232,21 @@ def score_summary(scored: pd.DataFrame) -> pd.DataFrame:
     ]
     frame["interval_score"] = frame.apply(_interval_score, axis=1)
     frame["covered"] = frame["in_interval"].astype("float64")
+    frame["error_latest"] = frame["prediction"] - frame["latest_value"]
     groups = frame.groupby(
         ["target", "horizon", "model_type", "is_backtest"], sort=True
     )
     summary = groups.agg(
         n=("forecast_id", "size"),
-        rmse=(
-            "error",
-            lambda e: float(np.sqrt(np.mean(e**2))) if e.notna().any() else math.nan,
-        ),
+        rmse=("error", _rmse),
         mae=("error", lambda e: float(e.abs().mean())),
         bias=("error", "mean"),
         coverage=("covered", "mean"),
         interval_score=("interval_score", "mean"),
         brier=("brier_score", "mean"),
+        rmse_latest=("error_latest", _rmse),
+        mae_latest=("error_latest", lambda e: float(e.abs().mean())),
+        bias_latest=("error_latest", "mean"),
     ).reset_index()
     return summary[columns]
 

@@ -10,6 +10,8 @@ Usage:
         save_resolution(conn, q.id, actual_as_of=date(2026, 12, 10), value=3.1)
     for f in unscored_forecasts(conn):              # forecasts of resolved questions
         save_score(conn, f.id, error=..., in_interval=..., brier_score=None)
+    for q in numeric_resolutions(conn):             # refresh revised values
+        save_latest(conn, q.question_id, value=3.5, as_of=date(2027, 2, 10))
     scored_forecasts(conn)                          # DataFrame for score summaries
 
 Like the rest of `db`, these functions don't commit; the caller does.
@@ -88,6 +90,42 @@ def save_resolution(
     return int(row[0])
 
 
+@dataclass(frozen=True)
+class NumericResolution:
+    question_id: int
+    target: str
+    target_date: date
+    latest_as_of: date | None
+
+
+def numeric_resolutions(conn: Connection) -> list[NumericResolution]:
+    """Resolved numeric questions, with the vintage of their stored latest value."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT q.id, q.target::text, q.target_date, r.latest_as_of
+            FROM resolutions r JOIN questions q ON q.id = r.question_id
+            WHERE r.actual_value IS NOT NULL
+            ORDER BY q.target_date, q.id
+            """
+        )
+        return [NumericResolution(*row) for row in cur.fetchall()]
+
+
+def save_latest(
+    conn: Connection, question_id: int, *, value: float, as_of: date
+) -> None:
+    """Record the latest published value of a resolved question's answer."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE resolutions SET latest_value = %s, latest_as_of = %s
+            WHERE question_id = %s
+            """,
+            (value, as_of, question_id),
+        )
+
+
 def unscored_forecasts(conn: Connection) -> list[UnscoredForecast]:
     """Forecasts of resolved questions that haven't been scored."""
     with conn.cursor() as cur:
@@ -150,7 +188,7 @@ def scored_forecasts(
                    q.lead_days, m.model_type, m.parameters, f.id AS forecast_id,
                    f.forecast_date, f.is_backtest, f.prediction, f.interval_lower,
                    f.interval_upper, f.error, f.in_interval, f.brier_score,
-                   r.actual_value, r.actual_outcome
+                   r.actual_value, r.actual_outcome, r.latest_value
             FROM forecasts f
             JOIN questions q ON q.id = f.question_id
             JOIN resolutions r ON r.question_id = q.id
@@ -164,7 +202,7 @@ def scored_forecasts(
         frame = pd.DataFrame(cur.fetchall(), columns=columns)
     numeric = [
         "prediction", "interval_lower", "interval_upper", "error", "brier_score",
-        "actual_value",
+        "actual_value", "latest_value",
     ]  # fmt: skip
     frame[numeric] = frame[numeric].astype("float64")
     return frame

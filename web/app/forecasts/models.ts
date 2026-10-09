@@ -37,6 +37,15 @@ export const MODELS: Record<string, { name: string; blurb: string; tone: Tone }>
 export const NUMERIC_ORDER = ["lightgbm", "arima", "random_walk"];
 export const FOMC_ORDER = ["fomc_lightgbm", "fomc_persistence"];
 
+/** Models that only appear in the backtest report. */
+const BACKTEST_NAMES: Record<string, string> = {
+  ets: "Exponential smoothing",
+  historical_mean: "Long-run average",
+  persistence: "Repeat last decision",
+  climatology: "Historical frequencies",
+  always_hold: "Always hold",
+};
+
 export function modelName(id: string): string {
-  return MODELS[id]?.name ?? id;
+  return MODELS[id]?.name ?? BACKTEST_NAMES[id] ?? id;
 }

@@ -283,8 +283,57 @@ def test_score_summary_by_target_horizon_and_model(db: Connection) -> None:
     # Widths 0.6. Feb's 3.5-4.1 holds 3.6; March's 2.9-3.5 misses it by 0.1.
     # An interval score is the width plus 10x any miss.
     assert unemployment["interval_score"] == pytest.approx((0.6 + 0.6 + 10 * 0.1) / 2)
+    # Against the latest values (March revised to 3.5): +0.2 and -0.3.
+    assert unemployment["mae_latest"] == pytest.approx(0.25)
+    assert unemployment["bias_latest"] == pytest.approx(-0.05)
+    assert unemployment["rmse_latest"] == pytest.approx(((0.04 + 0.09) / 2) ** 0.5)
     week = live[live["horizon"] == "7 days"].iloc[0]
     assert week["brier"] == pytest.approx(0.26) and pd.isna(week["rmse"])
+    assert pd.isna(week["mae_latest"])
 
     with_backtest = score_summary(scored_forecasts(db, include_backtest=True))
     assert with_backtest["is_backtest"].sum() == 1
+
+
+def test_latest_value_follows_revisions_but_scores_do_not(db: Connection) -> None:
+    unrate = numeric_forecast(db, "unemployment", date(2023, 3, 1), 3.8, 3.4, 4.0)
+    numeric_forecast(db, "cpi_yoy", date(2023, 3, 1), 4.0, 3.0, 5.0)
+    fomc_forecast(db, FOMC_HIKE, {"cut": 0.1, "hold": 0.3, "hike": 0.6})
+    db.commit()
+
+    def latest() -> dict[str, tuple[object, object]]:
+        return {
+            target: (None if value is None else float(value), as_of)  # type: ignore[arg-type]
+            for target, value, as_of in rows(
+                db,
+                "SELECT q.target::text, r.latest_value, r.latest_as_of"
+                " FROM resolutions r JOIN questions q ON q.id = r.question_id",
+            )
+        }
+
+    # Before the 2023-05-10 revisions the latest value is the first release.
+    result = resolve_and_score(db, STORE, date(2023, 5, 1))
+    assert result.latest_refreshed == 2
+    first = latest()
+    assert first["unemployment"] == (pytest.approx(3.6), date(2023, 4, 10))
+    assert first["cpi_yoy"] == (pytest.approx(5.0), date(2023, 4, 10))
+    assert first["fomc_decision"] == (None, None)
+
+    # No new vintage of UNRATE or CPIAUCSL: nothing to refresh.
+    assert resolve_and_score(db, STORE, date(2023, 5, 1)).latest_refreshed == 0
+
+    # After them: UNRATE March 3.5; CPI YoY 105 / 101 (the revised base).
+    assert resolve_and_score(db, STORE, date(2023, 5, 10)).latest_refreshed == 2
+    revised = latest()
+    assert revised["unemployment"] == (pytest.approx(3.5), date(2023, 5, 10))
+    assert revised["cpi_yoy"] == (
+        pytest.approx((105 / 101 - 1) * 100),
+        date(2023, 5, 10),
+    )
+    # The official resolution and score are unchanged.
+    assert rows(
+        db,
+        "SELECT count(*) FROM resolutions WHERE actual_value IS NOT NULL"
+        " AND actual_as_of = '2023-04-10'",
+    ) == [(2,)]
+    assert float(scores(db, unrate)[0]) == pytest.approx(0.2)  # type: ignore[arg-type]
