@@ -114,8 +114,8 @@ def fed_funds_target(store: VintageStore, as_of: date) -> pd.Series:
 
 def value_at(series: pd.Series, when: pd.Timestamp) -> float:
     """The latest value on or before `when`; NaN if there is none."""
-    earlier = series[series.index <= when]
-    return float(earlier.iloc[-1]) if len(earlier) else float("nan")
+    position = int(series.index.searchsorted(when, side="right"))  # sorted index
+    return float(series.iloc[position - 1]) if position else float("nan")
 
 
 def classify(before: float, after: float) -> Outcome:
