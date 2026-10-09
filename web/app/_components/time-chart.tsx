@@ -23,6 +23,8 @@ const W = 720;
 const H = 300;
 const M = { top: 16, right: 116, bottom: 30, left: 44 };
 const LABEL_GAP = 15;
+// How far the actual series' label ends before its last point.
+const ACTUAL_LABEL_INSET = 8;
 
 function niceTicks(min: number, max: number, count = 5): number[] {
   const span = max - min || 1;
@@ -93,10 +95,11 @@ export function TimeChart({
 
   const { x, y, yTicks, xTicks, dates } = layout;
 
-  // End-of-line labels, spread apart with leader lines where they'd collide.
+  // End-of-line labels for the forecasts, spread apart with leader lines where
+  // they'd collide.
   const labels = useMemo(() => {
     const ends = series
-      .filter((s) => s.points.length)
+      .filter((s) => s.points.length && s.kind === "forecast")
       .map((s) => {
         const last = s.points[s.points.length - 1];
         return {
@@ -116,6 +119,38 @@ export function TimeChart({
     if (overflow > 0) placed.forEach((p) => (p.ly -= overflow));
     return placed;
   }, [series, x, y]);
+
+  // The actual series ends where the forecasts start, so an end label there
+  // would sit on top of them. Label it just before its last point instead,
+  // above or below the line, whichever side the line keeps clear of.
+  const actualLabels = useMemo(
+    () =>
+      series
+        .filter((s) => s.kind === "actual" && s.points.length)
+        .map((s) => {
+          const xs = s.points.map((p) => x(p.date));
+          const ys = s.points.map((p) => y(p.value));
+          const yAt = (px: number) => {
+            const i = xs.findIndex((v) => v >= px);
+            if (i <= 0) return ys[Math.max(i, 0)];
+            if (step) return ys[xs[i] === px ? i : i - 1];
+            return (
+              ys[i - 1] + ((ys[i] - ys[i - 1]) * (px - xs[i - 1])) / (xs[i] - xs[i - 1])
+            );
+          };
+          const right = xs[xs.length - 1] - ACTUAL_LABEL_INSET;
+          const left = right - s.label.length * 6.5;
+          const samples = Array.from({ length: 9 }, (_, k) =>
+            yAt(left + ((right - left) * k) / 8),
+          );
+          // Text box is about 12px tall; keep it 4px clear of the line.
+          const above = Math.min(...samples) - 10;
+          const below = Math.max(...samples) + 10;
+          const ly = above - 6 >= M.top ? above : below;
+          return { id: s.id, label: s.label, x: right, y: ly };
+        }),
+    [series, x, y, step],
+  );
 
   function path(points: ChartPoint[], stepped: boolean): string {
     return points
@@ -292,6 +327,21 @@ export function TimeChart({
               {l.label}
             </text>
           </g>
+        ))}
+
+        {actualLabels.map((l) => (
+          <text
+            key={l.id}
+            x={l.x}
+            y={l.y}
+            textAnchor="end"
+            dominantBaseline="middle"
+            className="fill-foreground stroke-background text-[11px] font-medium"
+            strokeWidth={3}
+            paintOrder="stroke"
+          >
+            {l.label}
+          </text>
         ))}
 
         {hoverDate && (
