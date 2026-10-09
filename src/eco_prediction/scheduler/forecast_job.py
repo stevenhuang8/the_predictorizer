@@ -34,6 +34,10 @@ separately, so one failing model doesn't lose the others, and a rerun fills
 in only what's missing. A Postgres advisory lock keeps two runs from
 overlapping.
 
+Before forecasting, each run resolves questions whose answers have been
+published and scores their forecasts (`resolution_job`; `--no-resolve` skips
+it), so the one daily cron line covers both.
+
 `--once-per-month` makes daily cron runs safe: if live forecasts already
 exist this month, the run reuses that month's forecast date and only fills
 gaps, so a machine that was asleep on the 1st catches up the next morning
@@ -538,6 +542,11 @@ def main(argv: list[str] | None = None) -> int:
         help="reuse this month's forecast date if live forecasts exist (for cron)",
     )
     parser.add_argument("--no-fomc", action="store_true", help="skip FOMC questions")
+    parser.add_argument(
+        "--no-resolve",
+        action="store_true",
+        help="skip resolving and scoring answered questions",
+    )
     parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_FILE)
     args = parser.parse_args(argv)
     setup_logging(args.log_file)
@@ -561,6 +570,13 @@ def main(argv: list[str] | None = None) -> int:
                         forecast_date = earlier
                 ingest_failures = [] if args.no_ingest else refresh_data()
                 store = VintageStore.from_db(backfill=True, release_lags=RELEASE_LAGS)
+                if not args.no_resolve:
+                    # Imported here: resolution_job imports this module.
+                    from eco_prediction.scheduler.resolution_job import (
+                        resolve_and_score,
+                    )
+
+                    resolve_and_score(conn, store, now)
                 code_hash = code_version()
                 results = [
                     run_forecast_job(

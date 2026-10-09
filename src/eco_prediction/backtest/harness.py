@@ -180,21 +180,37 @@ class WalkForwardBacktest:
 
         (None, None) if the period hasn't been published.
         """
-        first = self.store.first_release(target.series_id, period)
-        if first is None:
-            return None, None
-        vintage = (
-            first
-            if self.resolve_with == "first_release"
-            else self.store.latest_vintage(target.series_id) or first
-        )
-        # Resolve with the transform applied to that vintage's whole series, so
-        # CPI YoY uses the year-earlier value as known at the same time.
-        view = PointInTimeData(self.store, target, vintage)
-        value = view.target_history().get(pd.Timestamp(period))
-        if value is None or math.isnan(value):
-            return None, None
-        return float(value), vintage
+        return actual_value(self.store, target, period, self.resolve_with)
+
+
+def actual_value(
+    store: VintageStore,
+    target: Target,
+    period: date,
+    resolve_with: Resolution = "first_release",
+) -> tuple[float | None, date | None]:
+    """A target period's resolved value and the vintage it comes from.
+
+    "first_release" uses the first vintage that published the period;
+    "latest" the store's latest vintage. (None, None) if not published.
+    Shared by the backtest harness and the live resolution job, so both
+    resolve forecasts the same way.
+    """
+    first = store.first_release(target.series_id, period)
+    if first is None:
+        return None, None
+    vintage = (
+        first
+        if resolve_with == "first_release"
+        else store.latest_vintage(target.series_id) or first
+    )
+    # Resolve with the transform applied to that vintage's whole series, so
+    # CPI YoY uses the year-earlier value as known at the same time.
+    view = PointInTimeData(store, target, vintage)
+    value = view.target_history().get(pd.Timestamp(period))
+    if value is None or math.isnan(value):
+        return None, None
+    return float(value), vintage
 
 
 def score_prediction(forecast: Forecast, actual: float | None) -> dict[str, Any]:
