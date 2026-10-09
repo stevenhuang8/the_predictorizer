@@ -197,6 +197,20 @@ class VintageStore:
         ]
         return None if rows.empty else rows["as_of"].iloc[0].date()
 
+    def until(self, cutoff: date) -> VintageStore:
+        """A store holding only the vintages published on or before `cutoff`.
+
+        Series load lazily, already backfilled, so nothing later can be read
+        from it whatever date is asked for.
+        """
+        limit = pd.Timestamp(cutoff)
+
+        def load(series_id: str) -> pd.DataFrame:
+            history = self.history(series_id)
+            return history[history["as_of"] <= limit]
+
+        return VintageStore(loader=load)
+
     def latest_vintage(self, series_id: str) -> date | None:
         history = self.history(series_id)
         return None if history.empty else history["as_of"].max().date()

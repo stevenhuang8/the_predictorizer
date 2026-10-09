@@ -55,6 +55,10 @@ V1_SERIES = (
     "MICH",  # Michigan 1-year inflation expectations
     "CUUR0000SEHA",  # CPI rent of primary residence (NSA)
     "CUSR0000SEHA",  # CPI rent of primary residence (SA)
+    "DFEDTAR",  # fed funds target rate, to 2008-12-15 (discontinued)
+    "DFEDTARU",  # fed funds target range upper limit, from 2008-12-16
+    "DGS2",  # 2-year Treasury yield, daily
+    "DTB3",  # 3-month Treasury bill rate, daily
 )
 
 
