@@ -52,3 +52,47 @@ npm run format                        # apply Prettier
 - **`npm audit`** reports 5 "high" findings. They're one advisory (`braces`, a denial of service from deeply nested glob patterns), pulled in by ESLint's dev-only tooling through `eslint-config-next`. Nothing runs in the browser or server, and nothing processes untrusted globs. The suggested `npm audit fix --force` would *downgrade* `eslint-config-next` to 14.x, so I didn't apply it. It should clear when `eslint-config-next` updates.
 - **`next dev` warns about a `package-lock.json` in your home folder** (`/Users/stevenhuang/package-lock.json`). It's outside the repository and Next ignores it, but it's probably a leftover worth deleting.
 - **The npm "Unknown user config" warnings** (`config`, `python`, `python3`) come from your `~/.npmrc`, not from this project.
+
+---
+
+## Follow-up: the live forecasts dashboard (commit `32e2292`, 2026-10-08)
+
+Not a separate Taskmaster task. It replaces the `/forecasts` placeholder above with a real page that reads the database. `/track-record` is still a placeholder. (These notes were written afterwards, on 2026-10-09, from the code.)
+
+### Data: `web/lib/db.ts` and `web/lib/dashboard-data.ts`
+- **`db()`** keeps one `pg` connection pool per server process (at most 4 connections), stored on `globalThis` so hot reloads in development don't open new pools. `DATE` columns come back as `"YYYY-MM-DD"` strings. A JavaScript `Date` would shift them by the server's time zone.
+- Both files import `server-only`, so the database code and `DATABASE_URL` can't end up in the browser bundle.
+- **`loadDashboard(today)`** runs its queries in parallel and returns:
+  - **forecasts:** for every *open* question (no resolution yet), the live forecasts from that question's latest forecast date. Backtest rows are excluded. They're split into numeric forecasts (point and 80% range) and FOMC forecasts (cut/hold/hike probabilities);
+  - **history:** the last 36 months of CPI year-over-year and unemployment, using the latest vintage of each month. CPI year-over-year is computed from the index levels, so 12 extra months are loaded;
+  - **the policy rate:** the midpoint of the Fed's target range (`DFEDTARU` − 0.125), reduced to the days it changed;
+  - **"data through"** (the newest `as_of` in `observations`) and **"last run"** (the newest live forecast date).
+
+### Page: `web/app/forecasts/`
+- **`page.tsx`** wraps the dashboard in `<Suspense>` with a loading message.
+- **`dashboard.tsx`** is a server component. `await connection()` makes it read the database on every request, not once at build time. If the database can't be reached, it shows a "Can't load forecasts right now" panel with the error instead of crashing.
+  - **A status line:** when the latest forecasts were made, and the date the data runs through.
+  - **Summary tiles:**
+    - inflation and unemployment: the latest value, and the range of the models' forecasts for the middle horizon (3 months), e.g. "expected 3.4% to 3.8% by Jan 2027";
+    - the next FOMC meeting: the FOMC model's most likely outcome and its probability.
+  - **Inflation and unemployment sections:** a sentence summarizing where the models expect the value to go ("rise to", "fall to" or "stay near" a value, using a 0.1-point threshold), a chart, and a table of each model's forecast and range for each target month.
+  - **Fed section:** the current target range and one card per open meeting, with a probability bar per model and the FOMC model's most likely outcome.
+  - **"How to read this":** what the ranges and probabilities mean, and a plain-language description of each model.
+- **`models.ts`:** a display name, a one-line description and a color for each model id. The random walk is shown as **"No change"** and persistence as **"Repeat last decision"**, since the technical names mean nothing to a general reader.
+
+### Components: `web/app/_components/`
+- **`time-chart.tsx`** (client component): an SVG chart of the actual history plus each model's forecasts, drawn from the latest actual value. Each forecast point has its range as a shaded band. Hovering shows every series at the nearest month. Labels sit at the right-hand end of each line instead of in a separate legend, spread apart with leader lines where they would overlap. Axis ticks use rounded steps (1, 2, 2.5, 5).
+- **`probability-bar.tsx`:** cut / hold / hike as one stacked bar (blue, neutral, red), with percentages inside each segment when they fit and always in the row below. It has an `aria-label` giving all three numbers.
+- **`tones.ts`:** chart colors as complete Tailwind class names. They have to be written out in full, because Tailwind only generates classes it finds as literal strings in the code. `stroke-${name}` would silently produce no color.
+- **`format.ts`:** date and percent formatting, always in UTC so dates don't shift by a day.
+- **`globals.css`:** new color tokens for the three models and the three decisions, with dark-mode values. Each model keeps the same color as in the Task 19 report.
+
+### Tradeoffs
+- **A hand-drawn SVG chart instead of a chart library.** No new dependency, and full control over the forecast bands and labels. The cost is about 340 lines of chart code to maintain.
+- **Raw SQL through `pg` instead of an ORM**, the same as the Python side. The queries are typed by hand, so a schema change won't be caught by the TypeScript compiler.
+- **Only open questions are shown.** Once a question resolves, its forecasts leave this page. They belong on `/track-record`, which hasn't been built yet.
+- **The page reads the database on every request.** That's fine for one user. With more traffic it should be cached until the next daily run.
+
+### Checks (2026-10-09)
+- `npm run lint`, `npm run typecheck` and `prettier --check`: no problems.
+- **Not checked here:** `npm run build`, and viewing the page in a browser.
