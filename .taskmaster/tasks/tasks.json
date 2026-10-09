@@ -411,5 +411,386 @@
         "master"
       ]
     }
+  },
+  "ai": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Create regression safety net for economy tests",
+        "description": "Snapshot current economy test results and ensure they stay green throughout all AI domain additions",
+        "details": "Create a pytest fixture or test runner that captures baseline test results for all existing economy-focused tests (test_fred_client.py, test_ingest.py, test_backtest_harness.py, test_statistical.py, test_lightgbm_model.py, test_fomc.py, test_forecast_job.py, test_resolution_job.py, etc.). Run `uv run pytest` and save the output/summary. Create a new test file `tests/test_regression_safety.py` that verifies the economy pipeline remains functional after each change. This should check: (1) all existing tests pass, (2) economy-specific database queries return expected results, (3) forecast_job.py runs without errors on economy targets. The implementation should use pytest markers to tag economy tests separately from AI tests, allowing selective execution via `pytest -m economy`.",
+        "testStrategy": "Run `uv run pytest` to verify current test suite passes (baseline). Create test_regression_safety.py that runs economy-marked tests. Verify it correctly identifies when economy functionality breaks by temporarily breaking a query and confirming test fails. Document baseline test count and coverage.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 2,
+        "title": "Create additive schema migration 009_ai_domain.sql",
+        "description": "Add domain column, new forecast targets, binary question type, and reconstructed flag to existing tables",
+        "details": "Create `migrations/009_ai_domain.sql` that:\n1. Adds `domain` VARCHAR(20) CHECK(domain IN ('economy', 'ai')) DEFAULT 'economy' to `series` and `questions` tables\n2. Adds new values to `forecast_target` enum: `ALTER TYPE forecast_target ADD VALUE 'arxiv_ai_submissions'; ALTER TYPE ... ADD VALUE 'hf_new_models'; ... ADD VALUE 'github_ai_activity'; ... ADD VALUE 'benchmark_sota'; ... ADD VALUE 'largest_training_run'; ALTER TYPE ... ADD VALUE 'ai_binary_event'`\n3. Creates new question_type for binary: `ALTER TYPE question_type ADD VALUE 'binary'`\n4. Adds `horizon_days INTEGER` to `questions` (nullable, for binary event questions with resolution dates)\n5. Adds `question_text TEXT` to `questions` for curated questions\n6. Adds `reconstructed BOOLEAN DEFAULT FALSE` to `observations`\n7. Relaxes the FOMC-only CHECK in questions: `ALTER TABLE questions DROP CONSTRAINT IF EXISTS questions_check; ADD CONSTRAINT questions_check CHECK ((target = 'fomc_decision' OR target = 'ai_binary_event') = (question_type = 'probability' OR question_type = 'binary'))`\n8. Updates resolutions to support binary: `ALTER TABLE resolutions DROP CONSTRAINT IF EXISTS resolutions_check1; ALTER TABLE resolutions ADD CONSTRAINT resolutions_check1 CHECK (actual_outcome IN ('cut', 'hold', 'hike', 'yes', 'no') OR actual_outcome IS NULL)`",
+        "testStrategy": "Run migration via `uv run python -m eco_prediction.db.migrate`. Verify schema changes with `\\d+ questions`, `\\d+ series`, `\\d+ observations`, `\\d+ resolutions` in psql. Insert test rows with domain='ai' and verify defaults work. Run existing economy tests to ensure backward compatibility. Test that binary questions can be created with horizon_days.",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 3,
+        "title": "Create AI package structure and HTTP client utilities",
+        "description": "Set up src/eco_prediction/ai/ package skeleton with shared utilities for rate-limited API clients",
+        "details": "Create directory structure:\n- `src/eco_prediction/ai/__init__.py`\n- `src/eco_prediction/ai/sources/` (package for API clients)\n- `src/eco_prediction/ai/sources/__init__.py`\n- `src/eco_prediction/ai/sources/base_client.py` (abstract base for HTTP clients with rate limiting and retry logic, following the pattern from `data/fred_client.py`)\n\nImplement `BaseAPIClient` in base_client.py:\n- Rate limiter using token bucket or sliding window (thread-safe with threading.Lock)\n- Retry logic with exponential backoff for 429, 5xx, timeouts, connection errors (use tenacity or manual implementation)\n- Context manager support (`__enter__`/`__exit__`)\n- Abstract methods: `_make_request(endpoint, params)`, `from_env()` for API key loading\n- Logging of requests and rate limit status\n\nThe base client should be reusable across arXiv, HuggingFace, GitHub, Epoch, Metaculus, and Polymarket clients.",
+        "testStrategy": "Create `tests/test_ai_base_client.py` that:\n1. Mocks HTTP responses and verifies rate limiting (should delay requests when limit reached)\n2. Tests retry logic (429/5xx → retry with backoff)\n3. Verifies context manager cleanup\n4. Tests thread safety with concurrent requests\nRun `uv run pytest tests/test_ai_base_client.py` and verify all tests pass.",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 4,
+        "title": "Implement arXiv API client and ingestion",
+        "description": "Create client for arXiv OAI-PMH API to fetch monthly submission counts for cs.AI, cs.LG, cs.CL categories",
+        "details": "Create `src/eco_prediction/ai/sources/arxiv_client.py`:\n- Extend BaseAPIClient or implement similar pattern\n- Use arXiv OAI-PMH API (http://export.arxiv.org/oai2) to query by submission date\n- Filter submissions with `set=cs` and primary categories cs.AI, cs.LG, cs.CL\n- Aggregate counts by month (group by submission date YYYY-MM)\n- Return list of (month, count, as_of=fetch_date) tuples\n- Mark historical data as `reconstructed=True` since arXiv doesn't version metadata\n\nCreate `src/eco_prediction/ai/ingest_arxiv.py`:\n- Function to backfill from ~2010 to present\n- Register arXiv as a source in `sources` table\n- Register series 'ARXIV_AI_SUBMISSIONS' in `series` table with domain='ai'\n- Insert observations into `observations` with `reconstructed=True` for historical data\n- For live pulls, use `as_of=today()` and `reconstructed=False`\n\nImplement pagination and resumption tokens for OAI-PMH protocol.",
+        "testStrategy": "Create `tests/test_arxiv_client.py`:\n1. Mock OAI-PMH responses with sample XML\n2. Verify category filtering (only cs.AI, cs.LG, cs.CL counted)\n3. Test monthly aggregation\n4. Verify reconstructed flag set correctly\n5. Test pagination/resumption\nRun backfill script with --dry-run flag and verify output format. Run actual ingestion and query database to verify data loaded correctly.",
+        "priority": "medium",
+        "dependencies": [
+          3
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 5,
+        "title": "Implement Hugging Face Hub API client and ingestion",
+        "description": "Create client for HF Hub API to track monthly new public model uploads",
+        "details": "Create `src/eco_prediction/ai/sources/huggingface_client.py`:\n- Extend BaseAPIClient\n- Use Hugging Face Hub API (https://huggingface.co/api/models)\n- Query models with filters: public, sorted by createdAt\n- Fetch model metadata including createdAt timestamp\n- Aggregate by month (group createdAt by YYYY-MM)\n- Return (month, count, as_of=fetch_date)\n- Mark historical backfill as `reconstructed=True`\n\nCreate `src/eco_prediction/ai/ingest_huggingface.py`:\n- Backfill function using model createdAt\n- Register 'Hugging Face Hub' source and 'HF_NEW_MODELS' series with domain='ai'\n- Insert observations with reconstructed flag\n- Handle rate limits (HF API has limits per hour)\n\nConsider using `huggingface_hub` Python SDK for easier API access, or direct REST calls.",
+        "testStrategy": "Create `tests/test_huggingface_client.py`:\n1. Mock HF API responses\n2. Verify monthly aggregation from createdAt\n3. Test rate limiting\n4. Verify reconstructed flag logic\n5. Test pagination (API returns paginated results)\nDry-run backfill and verify counts match expected order of magnitude. Spot-check random month against HF website search.",
+        "priority": "medium",
+        "dependencies": [
+          3
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 6,
+        "title": "Implement GitHub Search API client and ingestion",
+        "description": "Create client for GitHub API to track monthly AI-related repository creation and stars",
+        "details": "Create `src/eco_prediction/ai/sources/github_client.py`:\n- Extend BaseAPIClient with GitHub authentication (PAT from env)\n- Use GitHub Search API: `/search/repositories?q=topic:ai+OR+topic:machine-learning+OR+topic:deep-learning`\n- Track two metrics: (1) new repos created per month, (2) total stars on AI repos per month\n- Query by creation date ranges (created:YYYY-MM-01..YYYY-MM-31)\n- Handle strict rate limits (5000 requests/hour authenticated)\n- Return monthly snapshots\n- Mark as `reconstructed=True` for backfills (GitHub doesn't preserve historical star counts)\n\nCreate `src/eco_prediction/ai/ingest_github.py`:\n- Register 'GitHub' source and 'GITHUB_AI_ACTIVITY' series with domain='ai'\n- Backfill monthly snapshots\n- For live: monthly cron to snapshot current state\n\nNote: GitHub API has search limitations (1000 results max), may need multiple refined queries.",
+        "testStrategy": "Create `tests/test_github_client.py`:\n1. Mock GitHub API responses\n2. Test topic-based filtering\n3. Verify monthly aggregation\n4. Test rate limit handling (should respect headers)\n5. Test pagination up to 1000 result limit\nDry-run and compare sample month counts to manual GitHub search. Verify API token loaded from .env.local.",
+        "priority": "medium",
+        "dependencies": [
+          3
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 7,
+        "title": "Implement Epoch AI dataset ingestion",
+        "description": "Ingest Epoch AI benchmark data (SOTA scores) and notable models dataset (training compute)",
+        "details": "Create `src/eco_prediction/ai/sources/epoch_client.py`:\n- Epoch provides static datasets, not a live API (check https://epochai.org/data)\n- Download benchmarking hub CSV/JSON for SWE-bench Verified, GPQA Diamond, ARC-AGI\n- Download notable models dataset for training FLOPs\n- Parse and extract step series (SOTA only changes when new record set)\n- Return observations keyed by (benchmark_name, date_achieved, score/flops)\n\nCreate `src/eco_prediction/ai/ingest_epoch.py`:\n- Register 'Epoch AI' source\n- Register series: 'EPOCH_SWEBENCH_SOTA', 'EPOCH_GPQA_SOTA', 'EPOCH_ARC_SOTA', 'EPOCH_LARGEST_FLOPS' with domain='ai'\n- For step series: each observation is the new SOTA value at the date it was achieved\n- Mark as `reconstructed=True` (Epoch curates historical data)\n- Store log10(FLOPs) for compute metric\n\nNote: May need to periodically re-download CSVs or set up RSS/notification when Epoch updates data.",
+        "testStrategy": "Create `tests/test_epoch_client.py`:\n1. Test parsing of Epoch CSV/JSON format\n2. Verify step series logic (values only change at record-breaking dates)\n3. Test log10(FLOPs) calculation\n4. Verify series registration\nManually download sample Epoch data, run ingestion, query database to verify step series structure correct.",
+        "priority": "medium",
+        "dependencies": [
+          3
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 8,
+        "title": "Implement Metaculus and Polymarket API clients",
+        "description": "Create clients to mirror AI-related questions and fetch point-in-time community predictions",
+        "details": "Create `src/eco_prediction/ai/sources/metaculus_client.py`:\n- Extend BaseAPIClient\n- Use Metaculus API (https://www.metaculus.com/api2/) to query questions tagged with 'AI' or specific keywords\n- Fetch question metadata: title, resolution criteria, resolve_time\n- Fetch point-in-time community prediction (aggregate forecast)\n- Return (question_id, as_of_date, community_probability)\n\nCreate `src/eco_prediction/ai/sources/polymarket_client.py`:\n- Extend BaseAPIClient\n- Use Polymarket API (https://clob.polymarket.com/ or Gamma API) to fetch AI-related markets\n- Track market prices over time as probabilities\n- Return (market_id, as_of_date, market_probability)\n\nCreate `src/eco_prediction/ai/ingest_forecasting_platforms.py`:\n- Register 'Metaculus' and 'Polymarket' sources\n- Store community predictions as comparison benchmarks (not in observations, may need new table or use series differently)\n- Store question text and resolution rules in new questions or separate table\n\nNote: These are benchmarks to compare LLM forecaster against, not targets to predict.",
+        "testStrategy": "Create `tests/test_metaculus_client.py` and `tests/test_polymarket_client.py`:\n1. Mock API responses\n2. Test question filtering by tags/keywords\n3. Verify point-in-time prediction tracking\n4. Test rate limiting\nManually verify a few questions match between API and website. Store sample data and verify retrieval.",
+        "priority": "medium",
+        "dependencies": [
+          3
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 9,
+        "title": "Create AI question generator for numeric targets",
+        "description": "Generate forecast questions for AI numeric series (arXiv, HF, GitHub, benchmarks, compute) at horizons 1/3/6 months",
+        "details": "Create `src/eco_prediction/ai/questions.py`:\n- Function `generate_numeric_questions(conn, as_of_date)` that:\n  - For each AI numeric series (arxiv, hf, github, benchmarks, compute)\n  - For each horizon (1, 3, 6 months)\n  - Create question in `questions` table with target_date = as_of_date + horizon, domain='ai', question_type='numeric_interval'\n  - Set resolution_rule (e.g., \"First published monthly count for YYYY-MM\")\n- Reuse `db.forecasts.get_or_create_question()` pattern\n- Handle step series differently: for SOTA/compute, forecast the next value or whether it will change\n\nImplement similar to how economy generates CPI/unemployment questions but for AI series.",
+        "testStrategy": "Create `tests/test_ai_questions.py`:\n1. Test question generation for each series and horizon\n2. Verify domain='ai' and correct target types\n3. Test idempotency (calling twice doesn't duplicate)\n4. Verify resolution rules set correctly\nRun generator on test database and query questions table to verify structure.",
+        "priority": "medium",
+        "dependencies": [
+          2,
+          4,
+          5,
+          6,
+          7
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 10,
+        "title": "Create AI binary question generator and curated question loader",
+        "description": "Generate threshold-based binary questions and load curated questions from Metaculus/Polymarket",
+        "details": "Extend `src/eco_prediction/ai/questions.py`:\n- Function `generate_threshold_binary_questions(conn, as_of_date)` that:\n  - Creates questions like \"Will arXiv AI submissions exceed X by date D?\"\n  - For each numeric series, generate thresholds (e.g., 10%, 25%, 50% above current trend)\n  - Set horizon_days (e.g., 30, 90, 180 days until resolution)\n  - Store as question_type='binary', domain='ai'\n  - Include resolution rule in question_text\n\n- Function `load_curated_questions(conn)` that:\n  - Imports questions mirrored from Metaculus/Polymarket\n  - Stores question metadata (text, resolution date, criteria)\n  - Links to Metaculus/Polymarket question IDs for benchmark comparison\n  - Creates entries in questions table with question_type='binary'\n\nCreate mapping table or extend questions table to track source_platform and source_question_id.",
+        "testStrategy": "Create `tests/test_ai_binary_questions.py`:\n1. Test threshold generation logic (verify thresholds reasonable)\n2. Test curated question import\n3. Verify horizon_days calculation\n4. Verify question_text populated\n5. Test linking to external platforms\nGenerate sample questions and verify they can be resolved correctly with yes/no outcomes.",
+        "priority": "medium",
+        "dependencies": [
+          8,
+          9
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 11,
+        "title": "Add binary resolution support and Brier scoring",
+        "description": "Extend db/resolutions.py to handle binary yes/no outcomes and implement Brier score calculation for binary questions",
+        "details": "Modify `src/eco_prediction/db/resolutions.py`:\n- Add function `resolve_binary_question(conn, question_id, outcome: Literal['yes', 'no'], as_of_date)` that:\n  - Inserts resolution with actual_outcome='yes' or 'no'\n  - Validates outcome matches question type\n  - Stores resolution timestamp and as_of date\n\nModify `src/eco_prediction/backtest/metrics.py`:\n- Add function `brier_score_binary(predicted_prob: float, actual: Literal['yes', 'no']) -> float`:\n  - Returns (predicted_prob - 1 if actual=='yes' else 0) ** 2\n  - Range [0, 1] where 0 is perfect\n- Extend existing Brier score calculation (currently 3-class for FOMC) to handle binary\n- Add calibration metrics for binary predictions\n\nEnsure this works alongside existing FOMC probability resolution without breaking changes (guarded by domain check).",
+        "testStrategy": "Create `tests/test_binary_resolution.py`:\n1. Create test binary question and resolve it\n2. Verify resolution stored correctly\n3. Test Brier score calculation for binary (verify edge cases: 0, 0.5, 1.0 predictions)\n4. Test that economy FOMC resolutions still work\n5. Run existing test suite to ensure no regressions\nManually calculate Brier scores for sample predictions and verify implementation matches.",
+        "priority": "medium",
+        "dependencies": [
+          2,
+          10
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 12,
+        "title": "Create AI feature engineering pipeline",
+        "description": "Build feature engineering for AI series (lags, growth rates, cross-series signals) following pattern of features/engineering.py",
+        "details": "Create `src/eco_prediction/ai/features.py`:\n- Function `build_ai_features(conn, as_of_date, target_series) -> dict` that:\n  - Extracts point-in-time values for all AI series as of as_of_date\n  - Computes lags (1, 3, 6, 12 months) for each series\n  - Computes growth rates (1-month, 3-month, 12-month % change)\n  - Computes log-scale features for count series (arXiv, HF, GitHub)\n  - Cross-series signals: e.g., HF upload trend for predicting arXiv (correlation between model releases and paper submissions)\n  - Calendar features (month, quarter)\n  - Returns feature dict keyed by feature name\n\n- Follow the pattern from `features/engineering.py` but for AI-specific series\n- Handle step series (SOTA, compute): use time since last update, magnitude of last jump\n- Handle missing values and reconstructed data\n\nIntegrate with existing `db.forecasts.save_feature_snapshot()` for storing AI features.",
+        "testStrategy": "Create `tests/test_ai_features.py`:\n1. Mock AI series observations\n2. Verify lag calculations\n3. Test growth rate computations\n4. Test log-scale transformations\n5. Verify cross-series features\n6. Test handling of missing data\n7. Verify feature snapshot saving\nCompare feature output to manual calculations for sample dates.",
+        "priority": "medium",
+        "dependencies": [
+          4,
+          5,
+          6,
+          7,
+          9
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 13,
+        "title": "Implement AI baselines (random walk, historical mean, linear trend, base rate)",
+        "description": "Create baseline models for AI numeric and binary targets",
+        "details": "Extend `src/eco_prediction/models/baselines.py` or create `src/eco_prediction/ai/baselines.py`:\n\nFor numeric AI targets:\n- RandomWalkAI: next value = current value (last month's count)\n- HistoricalMeanAI: average over historical period\n- LinearTrendAI: fit simple linear regression to recent history (6-12 months), project forward\n- Handle log-scale for count series\n\nFor binary AI targets:\n- BaseRate: historical frequency of yes/no outcomes for similar question types\n- CommunityForecast: use Metaculus/Polymarket prediction as baseline (imported from platforms)\n\nCreate classes following the interface pattern from existing baselines:\n- `predict(view, target_period) -> Forecast` for numeric\n- `predict_probability(view, target_period) -> dict[str, float]` for binary\n\nEnsure these can be run through walk-forward harness.",
+        "testStrategy": "Create `tests/test_ai_baselines.py`:\n1. Test each baseline type with mock data\n2. Verify random walk returns last value\n3. Verify historical mean calculation\n4. Test linear trend projection\n5. Test base rate calculation\n6. Verify baselines can be scored\nRun baselines on backtest data and verify outputs reasonable (not NaN, within expected ranges).",
+        "priority": "medium",
+        "dependencies": [
+          12
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 14,
+        "title": "Adapt statistical models (ARIMA/ETS) for AI series",
+        "description": "Apply existing statistical models to AI count series with log-scale transformation",
+        "details": "Extend `src/eco_prediction/models/statistical.py`:\n- Add wrapper functions or classes for AI series that:\n  - Apply log transformation to count series before fitting ARIMA/ETS\n  - Fit models on log-scale data\n  - Transform predictions back to original scale (exp)\n  - Handle zero counts (add small constant before log if needed)\n  - Generate prediction intervals on log scale, then transform\n\n- Reuse existing ARIMAModel and ETSModel classes with preprocessing\n- For step series (SOTA, compute), may need different approach (state-space model or just use baselines)\n\nCreate `src/eco_prediction/ai/statistical_models.py` if substantial AI-specific logic needed, or extend existing with domain parameter.\n\nEnsure models can be run through walk-forward harness with point-in-time data.",
+        "testStrategy": "Create `tests/test_ai_statistical.py`:\n1. Test ARIMA on log-transformed count series\n2. Verify back-transformation to original scale\n3. Test interval generation\n4. Test handling of zero/small counts\n5. Verify models can be fit and predict\n6. Run on sample arXiv data and verify forecast reasonable\nCompare results to baseline random walk to ensure statistical models add value.",
+        "priority": "medium",
+        "dependencies": [
+          12,
+          13
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 15,
+        "title": "Train LightGBM models on AI features",
+        "description": "Adapt LightGBM for AI series using walk-forward validation with AI-specific features",
+        "details": "Extend `src/eco_prediction/models/lightgbm_model.py` or create AI-specific variant:\n- Use AI features from features.py as inputs\n- Predict change from current value (following economy pattern)\n- For count series, predict on log scale or log-change\n- Tune hyperparameters using time-ordered CV:\n  - Tree depth: 3-7\n  - Learning rate: 0.01-0.1\n  - Min leaf size: 5-50\n  - Early stopping on validation set\n- Handle cross-series signals (e.g., HF trend helps predict arXiv)\n- Generate SHAP explanations\n\nFor binary questions:\n- Train binary classifier (LightGBM with objective='binary')\n- Features: recent trends, time-to-resolution, cross-series signals\n- Output calibrated probabilities\n\nIntegrate with walk-forward harness in backtest/harness.py (extend to support domain='ai').",
+        "testStrategy": "Create `tests/test_ai_lightgbm.py`:\n1. Test model training on AI features\n2. Verify hyperparameter tuning\n3. Test prediction on log scale\n4. Verify SHAP values generated\n5. Test binary classifier for binary questions\n6. Run walk-forward backtest on sample period\n7. Verify model beats baselines on at least one metric\nCompare RMSE to random walk baseline on held-out test set.",
+        "priority": "medium",
+        "dependencies": [
+          12,
+          13,
+          14
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 16,
+        "title": "Create LLM call logging tables and retrieval corpus",
+        "description": "Add database tables for LLM forecaster: llm_calls for tracking prompts/responses, retrieval_documents for point-in-time context",
+        "details": "Create migration `migrations/010_llm_tables.sql`:\n\n```sql\nCREATE TABLE llm_calls (\n    id BIGSERIAL PRIMARY KEY,\n    forecast_id INTEGER REFERENCES forecasts(id) ON DELETE CASCADE,\n    model_id VARCHAR(100) NOT NULL,  -- e.g., 'claude-opus-4-20250514'\n    prompt TEXT NOT NULL,\n    context_hash VARCHAR(64),  -- hash of input context for deduplication\n    raw_response TEXT NOT NULL,\n    input_tokens INTEGER,\n    output_tokens INTEGER,\n    cost_usd NUMERIC(10, 6),\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n);\n\nCREATE INDEX idx_llm_calls_forecast ON llm_calls(forecast_id);\nCREATE INDEX idx_llm_calls_model ON llm_calls(model_id);\n\nCREATE TABLE retrieval_documents (\n    id BIGSERIAL PRIMARY KEY,\n    document_type VARCHAR(50) NOT NULL,  -- 'arxiv_abstract', 'release_note', 'metaculus_question', etc.\n    source_id VARCHAR(200) NOT NULL,  -- arXiv ID, GitHub release URL, etc.\n    content TEXT NOT NULL,\n    published_at TIMESTAMPTZ NOT NULL,  -- for point-in-time filtering\n    metadata JSONB,  -- tags, categories, etc.\n    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n    UNIQUE (document_type, source_id)\n);\n\nCREATE INDEX idx_retrieval_published ON retrieval_documents(published_at);\nCREATE INDEX idx_retrieval_type ON retrieval_documents(document_type);\n```\n\nCreate `src/eco_prediction/ai/llm/retrieval.py`:\n- Function `retrieve_documents(conn, as_of_date, query_type, limit=10)` for point-in-time retrieval\n- Function `index_arxiv_abstracts(conn)`, `index_release_notes(conn)`, etc. to populate corpus",
+        "testStrategy": "Run migration and verify tables created with `\\d+ llm_calls`, `\\d+ retrieval_documents`. Create test in `tests/test_llm_tables.py`:\n1. Insert sample llm_call and verify foreign key to forecasts\n2. Insert sample retrieval documents\n3. Test point-in-time retrieval (only docs published before as_of_date)\n4. Test deduplication via context_hash\n5. Run economy tests to ensure no regression\nPopulate sample documents and verify retrieval query performance.",
+        "priority": "high",
+        "dependencies": [
+          2,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 17,
+        "title": "Build retrieval corpus from AI sources",
+        "description": "Index arXiv abstracts, HF model cards, GitHub release notes, and Metaculus questions into retrieval_documents table",
+        "details": "Extend AI source clients to extract text content:\n\n`src/eco_prediction/ai/sources/arxiv_client.py`:\n- Add method `fetch_abstracts(start_date, end_date)` to get abstracts with submission dates\n- Store in retrieval_documents as document_type='arxiv_abstract'\n\n`src/eco_prediction/ai/sources/huggingface_client.py`:\n- Add method `fetch_model_cards()` to extract README/model card text\n- Store as document_type='hf_model_card'\n\n`src/eco_prediction/ai/sources/github_client.py`:\n- Fetch release notes for major AI libraries/frameworks\n- Store as document_type='github_release'\n\n`src/eco_prediction/ai/sources/metaculus_client.py`:\n- Store question text and background info as document_type='metaculus_question'\n\nCreate `src/eco_prediction/ai/llm/build_corpus.py`:\n- Script to backfill retrieval_documents from all sources\n- Run periodically (monthly) to add new documents\n- Handle duplicates via UNIQUE constraint on (document_type, source_id)",
+        "testStrategy": "Create `tests/test_retrieval_corpus.py`:\n1. Mock API responses with sample abstracts/cards/releases\n2. Test document indexing\n3. Verify published_at dates set correctly\n4. Test duplicate handling\n5. Verify corpus size reasonable (should have thousands of documents)\nRun corpus builder and query sample of documents to verify quality and coverage.",
+        "priority": "medium",
+        "dependencies": [
+          16
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 18,
+        "title": "Implement Claude LLM forecaster with structured output",
+        "description": "Create LLM forecaster using Anthropic SDK with prompt engineering, structured JSON output, and cost tracking",
+        "details": "Create `src/eco_prediction/ai/llm/claude_forecaster.py`:\n\nAdd `anthropic` to pyproject.toml dependencies.\n\nImplement `ClaudeForecast` class:\n- `__init__(model: str = 'claude-opus-4-20250514', api_key: str = None)`\n- `predict_numeric(question, context_bundle, horizon_months) -> dict`:\n  - Builds prompt with:\n    - Question text and resolution rule\n    - Recent series values (last 12 months)\n    - Statistical model forecasts (ARIMA, baseline)\n    - Top-k retrieved documents (k=10) with published_at <= forecast_date\n  - Calls Claude API with structured output schema:\n    ```python\n    {\"point_forecast\": float, \"lower_80\": float, \"upper_80\": float, \"rationale\": str}\n    ```\n  - Returns structured prediction\n\n- `predict_binary(question, context_bundle) -> dict`:\n  - Returns `{\"probability\": float, \"rationale\": str}`\n\n- Prompt versioning: store prompt template version in model_versions\n- Cost tracking: log input/output tokens, calculate cost using current Anthropic pricing\n- Error handling: API failures, rate limits, malformed responses\n- Store prompt, response, tokens in llm_calls table\n\nContext bundle builder:\n- `build_context_bundle(conn, question, as_of_date)` that:\n  - Fetches recent observations point-in-time\n  - Runs baseline forecasts\n  - Retrieves relevant documents\n  - Returns structured dict\n\nUse `.env.local` for `ANTHROPIC_API_KEY`.",
+        "testStrategy": "Create `tests/test_claude_forecaster.py`:\n1. Mock Anthropic API responses (no actual API calls in tests)\n2. Test prompt building (verify all required context included)\n3. Test structured output parsing\n4. Test error handling (API failures, malformed JSON)\n5. Test cost calculation\n6. Verify llm_calls table populated\n7. Test context bundle builder\nManually run on one test question with real API and verify output quality and rationale.",
+        "priority": "high",
+        "dependencies": [
+          16,
+          17
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 19,
+        "title": "Implement leakage-safe LLM backtest and ensemble model",
+        "description": "Create walk-forward backtest for LLM that excludes questions before model's training cutoff, plus LLM ensemble variant",
+        "details": "Extend `src/eco_prediction/backtest/harness.py`:\n- Add parameter `model_training_cutoff: date` to walk-forward functions\n- Filter out questions with target_date < cutoff for LLM models\n- Create separate evaluation window for LLM vs statistical models\n\nCreate `src/eco_prediction/ai/llm/backtest.py`:\n- `run_llm_backtest(conn, model='claude-opus-4-20250514', cutoff_date, start_date, end_date)`:\n  - For each forecast date in [start_date, end_date] after cutoff:\n    - Build point-in-time context bundle\n    - Call LLM forecaster\n    - Save forecast and llm_call\n  - Score against actuals\n  - Report Brier score vs Metaculus/Polymarket benchmarks\n\nCreate `src/eco_prediction/ai/llm/ensemble.py`:\n- `LLMEnsembleForecaster` that:\n  - Combines LLM forecast with statistical forecasts (ARIMA, LightGBM)\n  - Learns weights walk-forward (simple weighted average or stacking)\n  - Weights can be equal, inverse-variance, or learned via hold-out validation\n  - Returns blended forecast\n\nUse cheaper Haiku model for bulk backtests: `claude-haiku-3-20240320` or similar.",
+        "testStrategy": "Create `tests/test_llm_backtest.py`:\n1. Mock LLM responses for backtest\n2. Verify cutoff filtering (no questions before cutoff)\n3. Test ensemble weight learning\n4. Verify separate evaluation windows\n5. Test cost tracking across backtest\nRun backtest on small window (3 months) and verify:\n- LLM beats base rate baseline\n- Ensemble doesn't degrade performance\n- All questions after cutoff",
+        "priority": "high",
+        "dependencies": [
+          18
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 20,
+        "title": "Create LLM model comparison report",
+        "description": "Generate comparison report showing LLM performance vs baselines and market benchmarks",
+        "details": "Extend `src/eco_prediction/scripts/model_comparison.py` or create `src/eco_prediction/ai/llm/comparison_report.py`:\n\nGenerate report with sections:\n1. **Numeric targets**: RMSE comparison (LLM vs random walk, ARIMA, LightGBM) at 1/3/6 month horizons\n2. **Binary questions**: Brier score comparison (LLM vs base rate, Metaculus, Polymarket)\n3. **Cost analysis**: total API cost, cost per forecast, cost vs accuracy tradeoff (Opus vs Haiku)\n4. **Calibration**: reliability diagram for LLM probabilities\n5. **Sample rationales**: extract top-k LLM explanations for inspection\n6. **Training cutoff caveat**: clearly state evaluation window limited to post-cutoff dates\n\nOutput:\n- HTML report (like existing model_comparison.html)\n- JSON summary for dashboard\n- Store in `results/llm_comparison.html`\n\nInclude charts:\n- Error comparison (bar charts)\n- Calibration plots\n- Cost vs performance scatter\n- Rationale word cloud or key phrase extraction",
+        "testStrategy": "Create `tests/test_llm_comparison.py`:\n1. Generate report with mock forecast data\n2. Verify all sections present\n3. Test HTML output valid\n4. Test JSON structure\n5. Verify charts render\nRun report generator after backtest and manually inspect HTML for readability and insights.",
+        "priority": "medium",
+        "dependencies": [
+          19
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 21,
+        "title": "Create AI forecast job (scheduler integration)",
+        "description": "Implement separate scheduler entry point for AI domain forecasts, independent of economy forecast_job.py",
+        "details": "Create `src/eco_prediction/ai/jobs/ai_forecast_job.py`:\n- Function `run_ai_forecast_job(once_per_month: bool = False)` that:\n  - Refreshes AI data (arXiv, HF, GitHub, Epoch)\n  - Generates AI questions for next periods\n  - Runs all AI models (baselines, statistical, LightGBM, LLM)\n  - Saves forecasts to database\n  - Uses Postgres advisory lock to prevent overlaps (like economy job)\n  - Logs progress and errors\n\n- Use LLM Haiku for live forecasts to control costs, or make model configurable\n- Separate from `scheduler/forecast_job.py` which remains economy-only\n- Add CLI entry point: `eco-forecast ai-forecast`\n\nCreate `src/eco_prediction/ai/jobs/ai_resolution_job.py`:\n- Resolves AI questions whose answers are now available\n- Scores forecasts (RMSE, Brier, calibration)\n- Separate from economy resolution job\n- CLI: `eco-forecast ai-resolve`\n\nBoth jobs can be scheduled via cron separately from economy jobs.",
+        "testStrategy": "Create `tests/test_ai_forecast_job.py`:\n1. Test job runs without errors on test database\n2. Verify advisory lock works (concurrent runs blocked)\n3. Test question generation\n4. Test forecast saving\n5. Verify economy job unaffected (run both and check no interference)\n6. Test resolution job resolves questions correctly\nRun jobs manually with --dry-run flag and verify no database changes. Run actual job and verify forecasts saved.",
+        "priority": "high",
+        "dependencies": [
+          9,
+          10,
+          13,
+          14,
+          15,
+          18
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 22,
+        "title": "Add LLM-drafted post-mortem notes",
+        "description": "Extend post-mortem system to generate draft miss explanations using LLM for AI forecasts",
+        "details": "Extend `src/eco_prediction/postmortem/classifier.py`:\n- Add function `draft_llm_postmortem(conn, forecast_id, question, actual_outcome, prediction)` that:\n  - Builds context: question, forecast, actual outcome, retrieved documents, model explanations\n  - Prompts LLM: \"This forecast predicted X but the actual outcome was Y. Draft a concise explanation (2-3 sentences) for why the forecast missed. Consider: data issues, model limitations, regime changes, or inherent variance.\"\n  - Uses Claude Haiku for cost efficiency\n  - Returns draft explanation text\n  - Stores in `postmortems` table with flag `llm_drafted=True` and `human_confirmed=False`\n\n- Extend `postmortems` table in new migration `migrations/011_llm_postmortems.sql`:\n  - Add columns: `llm_drafted BOOLEAN DEFAULT FALSE`, `human_confirmed BOOLEAN DEFAULT FALSE`, `draft_note TEXT`\n\n- Integrate with existing 4-category classifier (bad_data, bad_model, regime_change, variance)\n- LLM draft supplements category, doesn't replace it\n\nCLI command to review and confirm drafts: `eco-forecast review-postmortems --domain ai`",
+        "testStrategy": "Create `tests/test_llm_postmortem.py`:\n1. Mock LLM response\n2. Test draft generation for sample misses\n3. Verify draft stored in database\n4. Test human confirmation workflow\n5. Verify existing economy postmortems unaffected\nManually review sample LLM drafts for quality and relevance.",
+        "priority": "low",
+        "dependencies": [
+          18,
+          21
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 23,
+        "title": "Extend CLI with --domain ai subcommands",
+        "description": "Add AI-specific commands to eco-forecast CLI while preserving economy-only default behavior",
+        "details": "Modify `src/eco_prediction/cli.py`:\n- Add `--domain {economy|ai}` option to relevant commands (default: 'economy')\n- Commands to extend:\n  - `eco-forecast forecast --domain ai --target arxiv --horizon 3`: forecast AI targets\n  - `eco-forecast forecast --domain ai --target binary --question-id 123`: forecast specific binary question\n  - `eco-forecast inspect --domain ai`: list AI questions\n  - `eco-forecast scores --domain ai`: AI track record\n  - `eco-forecast backtest --domain ai`: AI backtest report\n  - `eco-forecast ai-forecast`: run AI forecast job (alias)\n  - `eco-forecast ai-resolve`: run AI resolution job\n\n- Ensure economy commands work unchanged when --domain not specified\n- Add help text explaining AI domain\n- Route commands to appropriate modules based on domain\n\nExample:\n```python\n@click.command()\n@click.option('--domain', type=click.Choice(['economy', 'ai']), default='economy')\ndef forecast(domain, target, horizon):\n    if domain == 'ai':\n        # route to AI forecast logic\n    else:\n        # existing economy logic\n```",
+        "testStrategy": "Create `tests/test_cli_ai.py`:\n1. Test each AI command\n2. Verify --domain flag routing\n3. Test default behavior (economy unchanged)\n4. Test help text\n5. Run `eco-forecast --help` and verify AI commands listed\nManually test commands:\n- `uv run eco-forecast inspect --domain ai`\n- `uv run eco-forecast forecast --domain ai --target arxiv --horizon 3`\nVerify outputs correct and economy commands still work.",
+        "priority": "medium",
+        "dependencies": [
+          21
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 24,
+        "title": "Build Next.js dashboard AI section",
+        "description": "Add AI domain pages to dashboard: open questions, LLM rationales, track record vs market benchmarks",
+        "details": "Extend `web/` Next.js app:\n\nCreate new pages/components:\n- `web/app/ai/page.tsx`: AI overview page with key metrics\n- `web/app/ai/questions/page.tsx`: list of open AI questions (numeric + binary)\n- `web/app/ai/forecasts/[id]/page.tsx`: detailed forecast view with LLM rationale\n- `web/app/ai/track-record/page.tsx`: performance vs baselines and market\n\nCreate API routes or server components:\n- `web/lib/ai-dashboard-data.ts`:\n  - `getAIQuestions(domain='ai')`: fetch open AI questions\n  - `getAIForecasts(question_id)`: fetch forecasts with LLM rationales\n  - `getAITrackRecord()`: aggregate scores vs Metaculus/Polymarket\n  - `getLLMCosts()`: total API costs, forecast counts\n\nExtend `web/lib/dashboard-data.ts` to support domain parameter without breaking economy pages.\n\nUI features:\n- Display LLM rationales prominently (expandable sections)\n- Show model comparison charts (LLM vs statistical vs market)\n- Binary question probabilities with calibration viz\n- Cost per forecast metrics\n- Link to external platforms (Metaculus, Polymarket)\n\nStyling: reuse existing Tailwind components, ensure consistent with economy pages.\n\nAdd navigation: extend header/sidebar with AI section link.",
+        "testStrategy": "Manual testing:\n1. Start dev server: `cd web && npm run dev`\n2. Navigate to /ai and verify page loads\n3. Check open questions list populates from database\n4. View forecast detail page and verify rationale displays\n5. Test track record charts render correctly\n6. Verify economy pages unaffected (navigate to / and test existing features)\n7. Test responsive design (mobile, tablet, desktop)\n8. Run `npm run build` to ensure no TypeScript errors\nCreate sample data in database and verify dashboard displays it correctly.",
+        "priority": "medium",
+        "dependencies": [
+          21,
+          23
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 25,
+        "title": "End-to-end integration test and documentation",
+        "description": "Create comprehensive integration test covering full AI pipeline and update README with AI domain instructions",
+        "details": "Create `tests/test_ai_integration.py`:\n- Full pipeline test:\n  1. Ingest sample AI data (arXiv, HF, GitHub, Epoch)\n  2. Generate AI questions (numeric + binary)\n  3. Run all models (baselines, statistical, LightGBM, LLM mocked)\n  4. Save forecasts\n  5. Resolve questions\n  6. Score forecasts\n  7. Generate post-mortems\n  8. Verify track record\n- Use test database with fixtures\n- Mock external APIs (arXiv, HF, GitHub, Epoch, Metaculus, Polymarket, Anthropic)\n- Mock LLM to avoid API costs\n- Verify economy pipeline still works in parallel\n\nUpdate `README.md`:\n- Add section \"AI Domain Forecasting\" explaining:\n  - What AI targets are tracked\n  - LLM forecaster approach\n  - How to run AI forecasts: `uv run eco-forecast forecast --domain ai`\n  - Dashboard AI section\n  - Success criteria and current performance\n- Update \"Getting started\" with AI-specific setup:\n  - ANTHROPIC_API_KEY in .env.local\n  - Running AI data backfill\n  - Running AI forecast job\n- Update architecture diagram to show AI domain\n- Add notes on cost management for LLM forecaster\n\nCreate `NOTES/AI_DOMAIN.md` documenting:\n- Implementation decisions\n- Prompt engineering approach\n- Model performance results\n- Cost analysis\n- Future improvements",
+        "testStrategy": "Run `uv run pytest tests/test_ai_integration.py -v` and verify:\n1. Full pipeline executes without errors\n2. Data flows through all stages\n3. Economy pipeline unaffected (run economy integration test in parallel)\n4. All assertions pass\n5. Test coverage >80% for AI modules\nManually follow README instructions to verify setup process works for new users.",
+        "priority": "high",
+        "dependencies": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24
+        ],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "created": "2026-10-09T17:17:33.111Z",
+      "updated": "2026-10-09T17:17:33.111Z",
+      "description": "Tasks for ai context"
+    }
   }
 }
