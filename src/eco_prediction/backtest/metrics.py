@@ -5,6 +5,7 @@ Usage:
 
     metrics.rmse(results["prediction"], results["actual"])
     metrics.interval_coverage(zip(results["lower"], results["upper"]), results["actual"])
+    metrics.interval_score(zip(results["lower"], results["upper"]), results["actual"], 0.8)
     metrics.brier_score({"cut": 0.2, "hold": 0.7, "hike": 0.1}, "hold")  # 0.14
 
     probs, hits = metrics.one_vs_rest(fomc_probabilities, fomc_outcomes)
@@ -79,6 +80,32 @@ def interval_coverage(
     if (lower > upper).any():
         raise ValueError("an interval has lower > upper")
     return float(np.mean((lower <= act) & (act <= upper)))
+
+
+def interval_score(
+    intervals: Iterable[tuple[float, float]],
+    actuals: Iterable[float],
+    coverage: float,
+) -> float:
+    """Mean interval (Winkler) score of central `coverage` intervals; lower is better.
+
+    Width, plus 2 / (1 - coverage) times the distance by which the actual falls
+    outside. It rewards narrow intervals and punishes misses, so unlike
+    coverage it can't be gamed by widening. Gneiting & Raftery (2007).
+    """
+    if not 0 < coverage < 1:
+        raise ValueError("coverage must be between 0 and 1")
+    bounds = np.asarray(list(intervals), dtype=float).reshape(-1, 2)
+    lower, upper = bounds[:, 0], bounds[:, 1]
+    _, act = _paired(lower, actuals)
+    if np.isnan(upper).any():
+        raise ValueError("NaN in input; drop unresolved forecasts first")
+    if (lower > upper).any():
+        raise ValueError("an interval has lower > upper")
+    penalty = 2 / (1 - coverage)
+    below = np.maximum(lower - act, 0)
+    above = np.maximum(act - upper, 0)
+    return float(np.mean(upper - lower + penalty * (below + above)))
 
 
 def _check_probabilities(probabilities: Mapping[str, float]) -> None:

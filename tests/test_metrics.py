@@ -72,6 +72,38 @@ def test_interval_coverage_rejects_reversed_interval() -> None:
         metrics.interval_coverage([(1.0, 0.0)], [0.5])
 
 
+def test_interval_score_hand_computed() -> None:
+    # 80% intervals, so a miss costs 2 / 0.2 = 10 per unit outside.
+    intervals = [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)]
+    actuals = [0.5, 1.5, -0.2]  # inside, 0.5 above, 0.2 below
+    scores = [1.0, 1.0 + 10 * 0.5, 1.0 + 10 * 0.2]
+    assert metrics.interval_score(intervals, actuals, 0.8) == pytest.approx(
+        np.mean(scores)
+    )
+
+
+def test_interval_score_is_lowest_for_the_true_quantiles() -> None:
+    # Too narrow and too wide both score worse than the correct 80% interval,
+    # which is what coverage alone can't tell apart.
+    rng = np.random.default_rng(RNG_SEED)
+    actuals = rng.normal(0, 1, 20_000)
+    z = NormalDist().inv_cdf(0.9)
+
+    def score(half_width: float) -> float:
+        intervals = [(-half_width, half_width)] * len(actuals)
+        return metrics.interval_score(intervals, actuals, 0.8)
+
+    assert score(z) < score(0.5 * z)
+    assert score(z) < score(2.0 * z)
+
+
+def test_interval_score_rejects_bad_input() -> None:
+    with pytest.raises(ValueError, match="coverage"):
+        metrics.interval_score([(0.0, 1.0)], [0.5], 1.0)
+    with pytest.raises(ValueError, match="lower > upper"):
+        metrics.interval_score([(1.0, 0.0)], [0.5], 0.8)
+
+
 # Brier
 
 

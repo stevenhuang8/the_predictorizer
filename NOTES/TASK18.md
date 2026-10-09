@@ -60,24 +60,38 @@ uv run pytest tests/test_calibration.py
 
 ## Results on real data
 
-Walk-forward 2015-01 to 2024-12, 3-month horizon, annual refits, `VintageStore.from_db(backfill=True)`. Coverage of nominal 80% intervals, scored on forecasts from 2018-01 onward. 2015–17 are only there to give the calibrator errors to fit on.
+Walk-forward 2015-01 to 2024-12, 3-month horizon, annual refits, `VintageStore.from_db(backfill=True)`, `method="absolute"`. Everything is scored on the same 84 forecasts per row, 2018-01 to 2024-12. 2015–17 are only there to give the calibrator errors to fit on.
 
-| Target | Model | Model's own | Conformal, all past errors | Conformal, last 36 errors |
-|---|---|---|---|---|
-| CPI YoY | Random walk | 0.71 | 0.62 | 0.68 |
-| CPI YoY | LightGBM | 0.63 | 0.64 | 0.74 |
-| Unemployment | Random walk | 0.71 | 0.71 | **0.85** |
-| Unemployment | LightGBM | 0.61 | 0.69 | **0.82** |
+**Interval score** (`metrics.interval_score`, in percentage points, lower is better). It is width plus 10× the distance any actual lands outside its 80% interval, so widening intervals can't game it the way it games coverage. Coverage is in brackets.
 
-(`method="absolute"`. With `"signed"`, the last-36 column is 0.67 / 0.69 / 0.76 / 0.79, and using all errors was worse: unemployment LightGBM fell to 0.39.)
+| Target | Model | Model's own | All past errors | Last 24 | Last 36 | Last 60 |
+|---|---|---|---|---|---|---|
+| CPI YoY | Random walk | **5.57** (0.71) | 6.17 (0.62) | 5.91 (0.73) | 6.08 (0.68) | 6.21 (0.62) |
+| CPI YoY | LightGBM | 6.83 (0.63) | 6.72 (0.64) | 6.22 (0.70) | **6.13** (0.74) | 6.92 (0.68) |
+| Unemployment | Random walk | **8.80** (0.71) | 9.45 (0.71) | 12.06 (0.85) | 11.77 (0.85) | 10.13 (0.71) |
+| Unemployment | LightGBM | **10.08** (0.61) | 10.96 (0.69) | 12.95 (0.82) | 12.77 (0.82) | 11.56 (0.69) |
 
-- **Use a rolling window on this data.** Conformal intervals assume future errors look like past ones. The test window (COVID, the 2021–22 inflation surge) is far more volatile than 2015–19. Using all past errors keeps averaging in the calm years, so the intervals lag behind. The last 36 errors adapt within a year or two and bring three of four cases to 74–85%.
-- **CPI still under-covers (0.68–0.74).** The errors grew year after year through 2021–22, so every refit was fit on a calmer past than the year it then forecast. No method fit only on past errors can fully fix a trend in volatility. Scaling the interval by recent volatility would be the next step.
-- **Intervals get wider:** LightGBM's median width goes from 1.1 to 3.4 points for unemployment. That's mostly the 2020 spike entering the window; the model's own intervals were narrow because its out-of-fold errors came from calm years (Task 16).
-- **I kept the default `max_residuals=None`.** That is the textbook method, and the right window length depends on the target. I'd pass 36 in Task 19's comparison report.
+**Calibration doesn't help on this data, except for LightGBM on CPI.**
+- An earlier version of these notes judged the settings by coverage alone and recommended the last 36 errors. By interval score, the model's own intervals are best in three of four cases. The exception is LightGBM on CPI, where the last 36 errors are about 10% better.
+- **Unemployment's higher coverage came from making the intervals much wider.** Coverage by year (LightGBM; the random walk looks the same):
+
+  | | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 |
+  |---|---|---|---|---|---|---|---|
+  | Model's own | 1.0 | 0.92 | 0.0 | 0.0 | 0.92 | 0.75 | 0.67 |
+  | Last 36 | 1.0 | 0.75 | 0.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+
+  - **2020 is 0 for every setting.** Nothing fit only on past errors can anticipate COVID.
+  - **From 2021 on, the 2020 errors are in the window.** The interval widens to about 5 points and covers everything, including the calm years 2022–24, where narrow intervals would have done.
+  - **The coverage was right only on average.** The intervals were too narrow when it mattered and too wide afterwards.
+- **CPI with LightGBM** gains from the rolling window mainly in 2022 (coverage 0.58 → 1.0). Inflation errors built up gradually, which a window can follow; the unemployment shock was a single jump.
+- **The sample is small and the errors cluster.** One year can decide a row. With 84 forecasts, the standard error of a coverage figure is about 0.044 even before the clustering. Differences of a few tenths in interval score shouldn't be read as real.
+- **I kept the default `max_residuals=None`, and I don't recommend a window.** For Task 19, I'd report interval score and coverage by year alongside overall coverage. The next thing to try is conditional widths: scaling the interval by recent volatility, so it widens in a shock and narrows again after.
+
+### Added along the way: `metrics.interval_score`
+`interval_score(intervals, actuals, coverage)` is the mean Winkler/Gneiting–Raftery score: width + 2/(1 − coverage) × distance outside. It is a proper scoring rule: the true quantiles minimize it, so it can rank interval methods, which coverage can't. It isn't in `summarize`, because a results frame doesn't record the interval's nominal coverage.
 
 ## Tradeoffs and open questions
-- **Symmetric vs. signed.** Signed needs about twice as many errors for the same coverage (two tails) and was noisier here. Absolute is the safer default.
+- **Symmetric vs. signed.** Signed needs about twice as many errors for the same coverage (two tails). I compared the two on coverage only (signed was further from 80%), not on interval score, so absolute stays the default without strong evidence either way.
 - **One interval width per fold.** Every forecast in a fold gets the same width. Conditional widths (e.g. conformalized quantile regression, or scaling by the model's own interval width) would let calm and volatile periods differ within a fold.
 - **Folds are refit points, not forecast dates.** A forecast late in a fold doesn't use errors resolved after the fold started. Recalibrating at every forecast would use slightly more data, but it would no longer line up with "fit on fold N, apply to N+1".
 - **Isotonic can output exactly 0 or 1.** That's fine for Brier, but infinite for log-loss. `calibrate_categorical` falls back to the raw probabilities if every category maps to 0. Platt never outputs exactly 0 or 1.
@@ -85,7 +99,7 @@ Walk-forward 2015-01 to 2024-12, 3-month horizon, annual refits, `VintageStore.f
 ---
 
 ## Checks
-- `uv run pytest`: 235 passed (17 new in `tests/test_calibration.py`). They cover:
+- `uv run pytest`: 238 passed (17 new in `tests/test_calibration.py`, 3 in `tests/test_metrics.py` for `interval_score`: computed by hand, lowest at the true quantiles versus half and double width, bad input refused). The calibration tests cover:
   - the conformal quantile computed by hand, and `min_residuals` at 80%/90% and absolute/signed, with one residual fewer refused
   - 80% intervals fit on 1,000 heavy-tailed (t, 4 d.f.) errors covering 80% ± 3% of 10,000 new ones, for both methods
   - signed intervals recentring a forecast biased by 2
