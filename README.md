@@ -266,6 +266,5 @@ Checks: `uv run pytest`, `uv run ruff check src`, `uv run mypy src`.
 - **The ranges are too narrow during turbulent periods.** Conformal recalibration exists (`models/calibration.py`) but isn't in the live job yet.
 - **ALFRED's archive starts late for many series:** 2009–2011 for jobless claims, oil, wages and rent. Earlier backtests have fewer features.
 - **There's no live track record yet.** Live forecasts began in October 2026, and none have resolved.
-- **The cron entry isn't installed yet.** See `NOTES/TASK22.md`.
 
 Detailed notes for each piece of work are in `NOTES/TASK<N>.md`.
