@@ -1,8 +1,8 @@
 import { connection } from "next/server";
 
 import { longDate, monthYear, pct } from "../_components/format";
-import { TONES } from "../_components/tones";
-import { FOMC_ORDER, MODELS, NUMERIC_ORDER, modelName } from "../forecasts/models";
+import { HorizonChart } from "../_components/horizon-chart";
+import { FOMC_ORDER, NUMERIC_ORDER, modelName, modelTone } from "../forecasts/models";
 import type { NumericTarget } from "@/lib/dashboard-data";
 import {
   type FomcScore,
@@ -11,7 +11,7 @@ import {
   type TrackRecord,
   loadTrackRecord,
 } from "@/lib/track-record-data";
-import { CoverageMeter, ValueBar } from "./bars";
+import { CoverageMeter, ModelLabel, ValueBar } from "./bars";
 
 const TITLES: Record<NumericTarget, string> = {
   cpi_yoy: "Inflation (CPI, year over year)",
@@ -51,19 +51,58 @@ function rank(model: string, order: string[]): number {
 }
 
 function ModelCell({ model }: { model: string }) {
-  const tone = MODELS[model]?.tone;
   return (
-    <td className="py-2 pr-4 whitespace-nowrap">
-      <span className="flex items-center gap-2">
-        {tone && (
-          <span
-            className={`inline-block h-0.5 w-3 rounded ${TONES[tone].bg}`}
-            aria-hidden
-          />
-        )}
-        {modelName(model)}
-      </span>
+    <td className="py-2 pr-4">
+      <ModelLabel name={modelName(model)} tone={modelTone(model)} />
     </td>
+  );
+}
+
+/** RMSE by horizon per model, once some target has more than one horizon scored. */
+function HorizonCharts({
+  targets,
+  scores,
+}: {
+  targets: NumericTarget[];
+  scores: NumericScore[];
+}) {
+  const shown = targets.filter(
+    (t) =>
+      new Set(scores.filter((s) => s.target === t).map((s) => s.horizonMonths)).size >
+      1,
+  );
+  if (!shown.length) return null;
+  return (
+    <div>
+      <h3 className="font-semibold">Misses by forecast horizon</h3>
+      <p className="mt-1 max-w-2xl text-sm text-muted">
+        Typical miss (RMSE, percentage points) at each horizon, against the first
+        release.
+      </p>
+      <div className="mt-4 grid gap-8 md:grid-cols-2">
+        {shown.map((t) => {
+          const forTarget = scores.filter((s) => s.target === t);
+          const models = [...new Set(forTarget.map((s) => s.model))].sort(
+            (a, b) => rank(a, NUMERIC_ORDER) - rank(b, NUMERIC_ORDER),
+          );
+          return (
+            <HorizonChart
+              key={t}
+              title={TITLES[t]}
+              series={models.map((model) => ({
+                id: model,
+                label: modelName(model),
+                tone: modelTone(model),
+                points: forTarget
+                  .filter((s) => s.model === model)
+                  .sort((a, b) => a.horizonMonths - b.horizonMonths)
+                  .map((s) => ({ horizon: s.horizonMonths, value: s.rmse })),
+              }))}
+            />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -115,6 +154,7 @@ function NumericScores({
                   <ValueBar
                     value={r.rmse}
                     max={max}
+                    tone={modelTone(r.model)}
                     best={r.rmse === best.get(r.horizonMonths)}
                     label={`${modelName(r.model)}, ${r.horizonMonths}-month RMSE`}
                   />
@@ -127,7 +167,11 @@ function NumericScores({
                   {r.bias.toFixed(2)}
                 </td>
                 <td className="py-2">
-                  {r.coverage != null ? <CoverageMeter share={r.coverage} /> : "–"}
+                  {r.coverage != null ? (
+                    <CoverageMeter share={r.coverage} tone={modelTone(r.model)} />
+                  ) : (
+                    "–"
+                  )}
                 </td>
               </tr>
             ))}
@@ -186,6 +230,7 @@ function FomcScores({ scores }: { scores: FomcScore[] }) {
                   <ValueBar
                     value={r.brier}
                     max={max}
+                    tone={modelTone(r.model)}
                     best={r.brier === best.get(horizonLabel(r))}
                     label={`${modelName(r.model)}, Brier score`}
                   />
@@ -366,6 +411,7 @@ export async function LiveRecord() {
         {record.scored} forecast{record.scored === 1 ? "" : "s"} scored · {record.open}{" "}
         question{record.open === 1 ? "" : "s"} still open
       </p>
+      <HorizonCharts targets={[...targets]} scores={record.numeric} />
       {targets.map((t) => (
         <NumericScores
           key={t}

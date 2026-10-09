@@ -1,8 +1,9 @@
 import { monthYear } from "../_components/format";
-import { modelName } from "../forecasts/models";
+import { HorizonChart } from "../_components/horizon-chart";
+import { modelName, modelTone } from "../forecasts/models";
 import type { NumericTarget } from "@/lib/dashboard-data";
 import { type BacktestResults, loadBacktest } from "@/lib/backtest-results";
-import { CoverageMeter, ValueBar } from "./bars";
+import { CoverageMeter, ModelLabel, ValueBar } from "./bars";
 
 const TITLES: Record<NumericTarget, string> = {
   cpi_yoy: "Inflation (CPI, year over year)",
@@ -18,6 +19,53 @@ function sortBy<T extends { model: string }>(rows: T[], order: string[]): T[] {
   return [...rows].sort((a, b) => rank(a.model) - rank(b.model));
 }
 
+function modelsOf(results: BacktestResults, target: NumericTarget): string[] {
+  const models = [
+    ...new Set(results.metrics.filter((m) => m.target === target).map((m) => m.model)),
+  ];
+  return sortBy(
+    models.map((model) => ({ model })),
+    ORDER,
+  ).map((m) => m.model);
+}
+
+/** RMSE by horizon, one line per model: how fast each one's error grows. */
+function HorizonCharts({
+  results,
+  targets,
+}: {
+  results: BacktestResults;
+  targets: NumericTarget[];
+}) {
+  return (
+    <div>
+      <h3 className="font-semibold">Misses by forecast horizon</h3>
+      <p className="mt-1 max-w-2xl text-sm text-muted">
+        Typical miss (RMSE, percentage points) at each horizon. A model whose line sits
+        under the orange &ldquo;no change&rdquo; line beat simply assuming nothing
+        changes.
+      </p>
+      <div className="mt-4 grid gap-8 md:grid-cols-2">
+        {targets.map((t) => (
+          <HorizonChart
+            key={t}
+            title={TITLES[t]}
+            series={modelsOf(results, t).map((model) => ({
+              id: model,
+              label: modelName(model),
+              tone: modelTone(model),
+              points: results.metrics
+                .filter((m) => m.target === t && m.model === model)
+                .sort((a, b) => a.horizon - b.horizon)
+                .map((m) => ({ horizon: m.horizon, value: m.rmse })),
+            }))}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function NumericTable({
   target,
   results,
@@ -27,10 +75,7 @@ function NumericTable({
 }) {
   const metrics = results.metrics.filter((m) => m.target === target);
   const horizons = [...new Set(metrics.map((m) => m.horizon))].sort((a, b) => a - b);
-  const models = sortBy(
-    [...new Set(metrics.map((m) => m.model))].map((model) => ({ model })),
-    ORDER,
-  ).map((m) => m.model);
+  const models = modelsOf(results, target);
   const max = Math.max(...metrics.map((m) => m.rmse));
   const best = new Map(
     horizons.map((h) => [
@@ -64,7 +109,9 @@ function NumericTable({
               const share = coverage(model);
               return (
                 <tr key={model} className="border-b border-line">
-                  <td className="py-2 pr-4 whitespace-nowrap">{modelName(model)}</td>
+                  <td className="py-2 pr-4">
+                    <ModelLabel name={modelName(model)} tone={modelTone(model)} />
+                  </td>
                   {horizons.map((h) => {
                     const m = metrics.find((x) => x.model === model && x.horizon === h);
                     return (
@@ -73,6 +120,7 @@ function NumericTable({
                           <ValueBar
                             value={m.rmse}
                             max={max}
+                            tone={modelTone(model)}
                             best={m.rmse === best.get(h)}
                             label={`${modelName(model)}, ${h}-month RMSE`}
                           />
@@ -83,7 +131,11 @@ function NumericTable({
                     );
                   })}
                   <td className="py-2">
-                    {share != null ? <CoverageMeter share={share} /> : "–"}
+                    {share != null ? (
+                      <CoverageMeter share={share} tone={modelTone(model)} />
+                    ) : (
+                      "–"
+                    )}
                   </td>
                 </tr>
               );
@@ -118,11 +170,14 @@ function FomcTable({ results }: { results: BacktestResults }) {
           <tbody>
             {rows.map((r) => (
               <tr key={r.model} className="border-b border-line">
-                <td className="py-2 pr-4 whitespace-nowrap">{modelName(r.model)}</td>
+                <td className="py-2 pr-4">
+                  <ModelLabel name={modelName(r.model)} tone={modelTone(r.model)} />
+                </td>
                 <td className="py-2 pr-4">
                   <ValueBar
                     value={r.brier}
                     max={max}
+                    tone={modelTone(r.model)}
                     best={r.brier === best}
                     label={`${modelName(r.model)}, Brier score`}
                   />
@@ -177,6 +232,7 @@ export function Backtest() {
         </p>
       </div>
 
+      <HorizonCharts results={results} targets={targets} />
       {targets.map((t) => (
         <NumericTable key={t} target={t} results={results} />
       ))}

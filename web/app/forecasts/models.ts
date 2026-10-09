@@ -31,21 +31,43 @@ export const MODELS: Record<string, { name: string; blurb: string; tone: Tone }>
     blurb: "How often each decision followed the previous one in the past.",
     tone: "random_walk",
   },
+  // Baselines that only appear in the backtest.
+  ets: {
+    name: "Exponential smoothing",
+    blurb: "Tracks the level, trend and seasonality, weighting recent months most.",
+    tone: "yellow",
+  },
+  historical_mean: {
+    name: "Long-run average",
+    blurb: "Predicts the average of all past values.",
+    tone: "magenta",
+  },
+  persistence: {
+    name: "Repeat last decision",
+    blurb: "How often each decision followed the previous one in the past.",
+    tone: "random_walk",
+  },
+  climatology: {
+    name: "Historical frequencies",
+    blurb: "How often the Fed cut, held or hiked in the past, whatever came before.",
+    tone: "yellow",
+  },
+  always_hold: {
+    name: "Always hold",
+    blurb: "Puts all its weight on no change at every meeting.",
+    tone: "magenta",
+  },
 };
 
 /** Fixed display order (and so color order) of the models. */
 export const NUMERIC_ORDER = ["lightgbm", "arima", "random_walk"];
 export const FOMC_ORDER = ["fomc_lightgbm", "fomc_persistence"];
 
-/** Models that only appear in the backtest report. */
-const BACKTEST_NAMES: Record<string, string> = {
-  ets: "Exponential smoothing",
-  historical_mean: "Long-run average",
-  persistence: "Repeat last decision",
-  climatology: "Historical frequencies",
-  always_hold: "Always hold",
-};
-
 export function modelName(id: string): string {
-  return MODELS[id]?.name ?? BACKTEST_NAMES[id] ?? id;
+  return MODELS[id]?.name ?? id;
+}
+
+/** A model's color; ink for any model without one. */
+export function modelTone(id: string): Tone {
+  return MODELS[id]?.tone ?? "ink";
 }

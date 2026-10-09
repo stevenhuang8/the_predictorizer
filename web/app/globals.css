@@ -11,6 +11,9 @@
   --series-lightgbm: #2a78d6;
   --series-random-walk: #eb6834;
   --series-arima: #1baf7a;
+  /* Slots 4 and 5: baselines that only appear in the backtest. */
+  --series-yellow: #eda100;
+  --series-magenta: #e87ba4;
   --decision-cut: #2a78d6;
   --decision-hold: #d6d4cc;
   --decision-hike: #e34948;
@@ -27,6 +30,8 @@
     --series-lightgbm: #3987e5;
     --series-random-walk: #d95926;
     --series-arima: #199e70;
+    --series-yellow: #c98500;
+    --series-magenta: #d55181;
     --decision-cut: #3987e5;
     --decision-hold: #4a4a46;
     --decision-hike: #e66767;
@@ -46,6 +51,8 @@
   --color-series-lightgbm: var(--series-lightgbm);
   --color-series-random-walk: var(--series-random-walk);
   --color-series-arima: var(--series-arima);
+  --color-series-yellow: var(--series-yellow);
+  --color-series-magenta: var(--series-magenta);
   --color-decision-cut: var(--decision-cut);
   --color-decision-hold: var(--decision-hold);
   --color-decision-hike: var(--decision-hike);

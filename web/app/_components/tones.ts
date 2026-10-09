@@ -20,6 +20,16 @@ export const TONES = {
     fill: "fill-series-arima",
     bg: "bg-series-arima",
   },
+  yellow: {
+    stroke: "stroke-series-yellow",
+    fill: "fill-series-yellow",
+    bg: "bg-series-yellow",
+  },
+  magenta: {
+    stroke: "stroke-series-magenta",
+    fill: "fill-series-magenta",
+    bg: "bg-series-magenta",
+  },
 } as const;
 
 export type Tone = keyof typeof TONES;
