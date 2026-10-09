@@ -1,0 +1,879 @@
+{
+  "settings": {
+    "start": "2020-01-01",
+    "end": "2023-12-01",
+    "retrain_frequency": "annually",
+    "horizons": [
+      1,
+      3,
+      6
+    ],
+    "targets": [
+      "cpi_yoy",
+      "unemployment"
+    ],
+    "include_fomc": true
+  },
+  "success_criterion": {
+    "criterion": "LightGBM RMSE < random walk RMSE, CPI YoY, 3-month horizon",
+    "lightgbm_rmse": 1.9771026124704187,
+    "random_walk_rmse": 1.844792497051587,
+    "dm_p": 0.23654395465862937,
+    "passed": false,
+    "significant": false
+  },
+  "findings": [
+    "CPI YoY (%), 1-month: lowest RMSE is ARIMA (0.83), 35% below the random walk (Diebold-Mariano p = 0.00).",
+    "CPI YoY (%), 3-month: lowest RMSE is ARIMA (1.24), 33% below the random walk (Diebold-Mariano p = 0.07).",
+    "CPI YoY (%), 6-month: lowest RMSE is ARIMA (1.87), 28% below the random walk (Diebold-Mariano p = 0.13).",
+    "Unemployment (%), 1-month: lowest RMSE is Historical mean (2.62), 2% below the random walk (Diebold-Mariano p = 0.85); by MAE, Random walk is lowest (1.23 vs 2.06).",
+    "Unemployment (%), 3-month: lowest RMSE is Historical mean (2.62), 17% below the random walk (Diebold-Mariano p = 0.44); by MAE, Random walk is lowest (1.71 vs 2.06).",
+    "Unemployment (%), 6-month: lowest RMSE is Historical mean (1.90), 25% below the random walk (Diebold-Mariano p = 0.61); by MAE, Random walk is lowest (1.58 vs 1.72)."
+  ],
+  "metrics": [
+    {
+      "target": "cpi_yoy",
+      "horizon": 1,
+      "model": "lightgbm",
+      "n": 48,
+      "rmse": 1.0448060233670367,
+      "mae": 0.8260534488987185,
+      "bias": -0.02585678680165754,
+      "coverage": 0.5625,
+      "interval_score": 4.383656782227959,
+      "rmse_vs_random_walk": 0.820922580245336,
+      "dm_stat": -3.3944238830668882,
+      "dm_p": 0.001405896025927384
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 1,
+      "model": "random_walk",
+      "n": 48,
+      "rmse": 1.2727217505148807,
+      "mae": 1.0194953065049157,
+      "bias": -0.05641462017352272,
+      "coverage": 0.5416666666666666,
+      "interval_score": 5.264704963559628,
+      "rmse_vs_random_walk": 1.0,
+      "dm_stat": null,
+      "dm_p": null
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 1,
+      "model": "arima",
+      "n": 48,
+      "rmse": 0.8287405241196981,
+      "mae": 0.6552136316679756,
+      "bias": -0.14331269580517073,
+      "coverage": 0.7083333333333334,
+      "interval_score": 3.058870967329445,
+      "rmse_vs_random_walk": 0.6511560942401042,
+      "dm_stat": -3.109896288909912,
+      "dm_p": 0.003176550208868491
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 1,
+      "model": "ets",
+      "n": 48,
+      "rmse": 1.1573467280162473,
+      "mae": 0.9092457397166411,
+      "bias": -0.008384237111822013,
+      "coverage": 0.6458333333333334,
+      "interval_score": 4.35211717054565,
+      "rmse_vs_random_walk": 0.9093478032791077,
+      "dm_stat": -2.2486545854794717,
+      "dm_p": 0.02926207665440873
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 1,
+      "model": "historical_mean",
+      "n": 48,
+      "rmse": 2.8611935284248076,
+      "mae": 2.4060064270396704,
+      "bias": -1.051845629089848,
+      "coverage": 0.7916666666666666,
+      "interval_score": 9.683338256871437,
+      "rmse_vs_random_walk": 2.2480903836736577,
+      "dm_stat": 4.91005204852419,
+      "dm_p": 1.1394769912114292e-05
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 3,
+      "model": "lightgbm",
+      "n": 48,
+      "rmse": 1.9771026124704187,
+      "mae": 1.702863867971388,
+      "bias": -0.3242038782592433,
+      "coverage": 0.3541666666666667,
+      "interval_score": 10.211779260591522,
+      "rmse_vs_random_walk": 1.0717208659674704,
+      "dm_stat": 1.1989851084115846,
+      "dm_p": 0.23654395465862937
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 3,
+      "model": "random_walk",
+      "n": 48,
+      "rmse": 1.844792497051587,
+      "mae": 1.5257907200460874,
+      "bias": -0.1148404539002612,
+      "coverage": 0.5,
+      "interval_score": 7.5078377747686815,
+      "rmse_vs_random_walk": 1.0,
+      "dm_stat": null,
+      "dm_p": null
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 3,
+      "model": "arima",
+      "n": 48,
+      "rmse": 1.2420840381521225,
+      "mae": 1.0280671747942034,
+      "bias": -0.3140824347616773,
+      "coverage": 0.6875,
+      "interval_score": 4.515162002357408,
+      "rmse_vs_random_walk": 0.673292004459724,
+      "dm_stat": -1.8457349120839093,
+      "dm_p": 0.07123487875829239
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 3,
+      "model": "ets",
+      "n": 48,
+      "rmse": 1.6775083224999447,
+      "mae": 1.347897929532154,
+      "bias": -0.04708968335361163,
+      "coverage": 0.6041666666666666,
+      "interval_score": 6.424096113375646,
+      "rmse_vs_random_walk": 0.9093208722287185,
+      "dm_stat": -1.3594117030678416,
+      "dm_p": 0.18050309067346623
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 3,
+      "model": "historical_mean",
+      "n": 48,
+      "rmse": 2.8456181495509933,
+      "mae": 2.3535137787938276,
+      "bias": -1.1102714628165866,
+      "coverage": 0.7916666666666666,
+      "interval_score": 9.68203210669243,
+      "rmse_vs_random_walk": 1.5425139434917268,
+      "dm_stat": 1.4412243968616003,
+      "dm_p": 0.156151070806342
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 6,
+      "model": "lightgbm",
+      "n": 48,
+      "rmse": 2.8180384858089016,
+      "mae": 2.426238439073381,
+      "bias": -0.4158873620146501,
+      "coverage": 0.4166666666666667,
+      "interval_score": 15.401103191212291,
+      "rmse_vs_random_walk": 1.0852748144903952,
+      "dm_stat": 0.5496825673887165,
+      "dm_p": 0.5851397903111414
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 6,
+      "model": "random_walk",
+      "n": 48,
+      "rmse": 2.596612810122336,
+      "mae": 2.211493622257563,
+      "bias": -0.28697390293449393,
+      "coverage": 0.4791666666666667,
+      "interval_score": 11.452106487469043,
+      "rmse_vs_random_walk": 1.0,
+      "dm_stat": null,
+      "dm_p": null
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 6,
+      "model": "arima",
+      "n": 48,
+      "rmse": 1.8712521526226948,
+      "mae": 1.5571136188384707,
+      "bias": -0.7035215808652217,
+      "coverage": 0.6458333333333334,
+      "interval_score": 6.905930455493649,
+      "rmse_vs_random_walk": 0.7206512058047396,
+      "dm_stat": -1.524287020146606,
+      "dm_p": 0.134138218623384
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 6,
+      "model": "ets",
+      "n": 48,
+      "rmse": 2.3670424236331087,
+      "mae": 1.9893395573710126,
+      "bias": -0.2021541184304113,
+      "coverage": 0.5625,
+      "interval_score": 9.102079389384036,
+      "rmse_vs_random_walk": 0.9115885180900686,
+      "dm_stat": -1.0906079488361842,
+      "dm_p": 0.2810052523720432
+    },
+    {
+      "target": "cpi_yoy",
+      "horizon": 6,
+      "model": "historical_mean",
+      "n": 48,
+      "rmse": 2.7440549103315854,
+      "mae": 2.184043171505735,
+      "bias": -1.2824049118508192,
+      "coverage": 0.7916666666666666,
+      "interval_score": 9.68007288142392,
+      "rmse_vs_random_walk": 1.0567824743198055,
+      "dm_stat": 0.1583399080556341,
+      "dm_p": 0.874867346471051
+    },
+    {
+      "target": "unemployment",
+      "horizon": 1,
+      "model": "lightgbm",
+      "n": 48,
+      "rmse": 2.8352789131579104,
+      "mae": 1.6504372171923538,
+      "bias": 0.30257841449092465,
+      "coverage": 0.3333333333333333,
+      "interval_score": 14.229321579848081,
+      "rmse_vs_random_walk": 1.062550151122618,
+      "dm_stat": 1.716887404631505,
+      "dm_p": 0.09258396590762585
+    },
+    {
+      "target": "unemployment",
+      "horizon": 1,
+      "model": "random_walk",
+      "n": 48,
+      "rmse": 2.6683718506485063,
+      "mae": 1.23125,
+      "bias": -0.010416666666666666,
+      "coverage": 0.5833333333333334,
+      "interval_score": 10.566666666666668,
+      "rmse_vs_random_walk": 1.0,
+      "dm_stat": null,
+      "dm_p": null
+    },
+    {
+      "target": "unemployment",
+      "horizon": 1,
+      "model": "arima",
+      "n": 48,
+      "rmse": 3.354917339466068,
+      "mae": 1.7599479675293992,
+      "bias": 0.1589107949852977,
+      "coverage": 0.5833333333333334,
+      "interval_score": 15.25066545595019,
+      "rmse_vs_random_walk": 1.2572900357387249,
+      "dm_stat": 1.998243899974815,
+      "dm_p": 0.051494318107369694
+    },
+    {
+      "target": "unemployment",
+      "horizon": 1,
+      "model": "ets",
+      "n": 48,
+      "rmse": 3.05003853469749,
+      "mae": 1.3833946987415622,
+      "bias": 0.14070525656228342,
+      "coverage": 0.7708333333333334,
+      "interval_score": 11.631869296765165,
+      "rmse_vs_random_walk": 1.1430335445774642,
+      "dm_stat": 1.3961245003583187,
+      "dm_p": 0.16923681867890084
+    },
+    {
+      "target": "unemployment",
+      "horizon": 1,
+      "model": "historical_mean",
+      "n": 48,
+      "rmse": 2.6172148048897648,
+      "mae": 2.0567123064924275,
+      "bias": 0.5563732621840906,
+      "coverage": 0.7083333333333334,
+      "interval_score": 8.362748892048144,
+      "rmse_vs_random_walk": 0.9808283670260167,
+      "dm_stat": -0.19047860158266824,
+      "dm_p": 0.8497544822279601
+    },
+    {
+      "target": "unemployment",
+      "horizon": 3,
+      "model": "lightgbm",
+      "n": 48,
+      "rmse": 3.2835765611365795,
+      "mae": 1.9544427369242117,
+      "bias": 0.08604660058338125,
+      "coverage": 0.4166666666666667,
+      "interval_score": 16.675970057797556,
+      "rmse_vs_random_walk": 1.036965592907837,
+      "dm_stat": 1.1831186769449589,
+      "dm_p": 0.2427122569235671
+    },
+    {
+      "target": "unemployment",
+      "horizon": 3,
+      "model": "random_walk",
+      "n": 48,
+      "rmse": 3.166524119598649,
+      "mae": 1.7145833333333336,
+      "bias": -0.006250000000000089,
+      "coverage": 0.5,
+      "interval_score": 14.35833333333334,
+      "rmse_vs_random_walk": 1.0,
+      "dm_stat": null,
+      "dm_p": null
+    },
+    {
+      "target": "unemployment",
+      "horizon": 3,
+      "model": "arima",
+      "n": 48,
+      "rmse": 4.399528370066761,
+      "mae": 2.373752756350168,
+      "bias": 0.21697973466355794,
+      "coverage": 0.5833333333333334,
+      "interval_score": 20.485675339434994,
+      "rmse_vs_random_walk": 1.389387291521529,
+      "dm_stat": 1.1111890500620594,
+      "dm_p": 0.2721391930661779
+    },
+    {
+      "target": "unemployment",
+      "horizon": 3,
+      "model": "ets",
+      "n": 48,
+      "rmse": 3.860928732572132,
+      "mae": 1.9413935142787813,
+      "bias": 0.2192359789002234,
+      "coverage": 0.75,
+      "interval_score": 15.844335812671366,
+      "rmse_vs_random_walk": 1.2192955388135485,
+      "dm_stat": 0.9965294613598392,
+      "dm_p": 0.32409605134743197
+    },
+    {
+      "target": "unemployment",
+      "horizon": 3,
+      "model": "historical_mean",
+      "n": 48,
+      "rmse": 2.6197185078990293,
+      "mae": 2.063284877258857,
+      "bias": 0.5605399288507571,
+      "coverage": 0.7291666666666666,
+      "interval_score": 8.34293543618764,
+      "rmse_vs_random_walk": 0.8273167703617788,
+      "dm_stat": -0.7797627642809828,
+      "dm_p": 0.43943967372547155
+    },
+    {
+      "target": "unemployment",
+      "horizon": 6,
+      "model": "lightgbm",
+      "n": 48,
+      "rmse": 4.1790062676196325,
+      "mae": 3.3912242888413027,
+      "bias": 2.560663811556646,
+      "coverage": 0.25,
+      "interval_score": 29.934546186682706,
+      "rmse_vs_random_walk": 1.660350253784238,
+      "dm_stat": 1.9356777498010913,
+      "dm_p": 0.058935501494816925
+    },
+    {
+      "target": "unemployment",
+      "horizon": 6,
+      "model": "random_walk",
+      "n": 48,
+      "rmse": 2.516942589730644,
+      "mae": 1.5791666666666668,
+      "bias": 0.5583333333333332,
+      "coverage": 0.5,
+      "interval_score": 12.370833333333335,
+      "rmse_vs_random_walk": 1.0,
+      "dm_stat": null,
+      "dm_p": null
+    },
+    {
+      "target": "unemployment",
+      "horizon": 6,
+      "model": "arima",
+      "n": 48,
+      "rmse": 4.744582448603887,
+      "mae": 2.3375030204783207,
+      "bias": 0.6756327398189853,
+      "coverage": 0.6666666666666666,
+      "interval_score": 20.233583306214516,
+      "rmse_vs_random_walk": 1.8850578745666338,
+      "dm_stat": 1.0983383218113505,
+      "dm_p": 0.2776516555970386
+    },
+    {
+      "target": "unemployment",
+      "horizon": 6,
+      "model": "ets",
+      "n": 48,
+      "rmse": 3.7844183777055225,
+      "mae": 1.894268193469152,
+      "bias": 0.8626930928400349,
+      "coverage": 0.6666666666666666,
+      "interval_score": 13.898551431624247,
+      "rmse_vs_random_walk": 1.5035775520452057,
+      "dm_stat": 1.0202511049636733,
+      "dm_p": 0.31283248479041753
+    },
+    {
+      "target": "unemployment",
+      "horizon": 6,
+      "model": "historical_mean",
+      "n": 48,
+      "rmse": 1.8961667465536463,
+      "mae": 1.7193729724969529,
+      "bias": 1.1251232621840905,
+      "coverage": 0.7916666666666666,
+      "interval_score": 5.106763948700576,
+      "rmse_vs_random_walk": 0.7533611431147377,
+      "dm_stat": -0.5140234719543613,
+      "dm_p": 0.6096440343166355
+    }
+  ],
+  "coverage_by_year": [
+    {
+      "target": "cpi_yoy",
+      "model": "lightgbm",
+      "2020": 0.3333333333333333,
+      "2021": 0.0,
+      "2022": 0.5833333333333334,
+      "2023": 0.5
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "random_walk",
+      "2020": 0.6666666666666666,
+      "2021": 0.16666666666666666,
+      "2022": 0.5,
+      "2023": 0.6666666666666666
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "arima",
+      "2020": 0.5833333333333334,
+      "2021": 0.5,
+      "2022": 0.6666666666666666,
+      "2023": 1.0
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "ets",
+      "2020": 0.5833333333333334,
+      "2021": 0.4166666666666667,
+      "2022": 0.5833333333333334,
+      "2023": 0.8333333333333334
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "historical_mean",
+      "2020": 1.0,
+      "2021": 0.75,
+      "2022": 0.4166666666666667,
+      "2023": 1.0
+    },
+    {
+      "target": "unemployment",
+      "model": "lightgbm",
+      "2020": 0.0,
+      "2021": 0.0,
+      "2022": 0.9166666666666666,
+      "2023": 0.75
+    },
+    {
+      "target": "unemployment",
+      "model": "random_walk",
+      "2020": 0.0,
+      "2021": 0.08333333333333333,
+      "2022": 0.9166666666666666,
+      "2023": 1.0
+    },
+    {
+      "target": "unemployment",
+      "model": "arima",
+      "2020": 0.08333333333333333,
+      "2021": 0.25,
+      "2022": 1.0,
+      "2023": 1.0
+    },
+    {
+      "target": "unemployment",
+      "model": "ets",
+      "2020": 0.25,
+      "2021": 0.75,
+      "2022": 1.0,
+      "2023": 1.0
+    },
+    {
+      "target": "unemployment",
+      "model": "historical_mean",
+      "2020": 0.5,
+      "2021": 1.0,
+      "2022": 0.5833333333333334,
+      "2023": 0.8333333333333334
+    }
+  ],
+  "calibration": [
+    {
+      "target": "cpi_yoy",
+      "model": "lightgbm",
+      "nominal": 0.5,
+      "empirical": 0.1875
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "lightgbm",
+      "nominal": 0.8,
+      "empirical": 0.3541666666666667
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "lightgbm",
+      "nominal": 0.95,
+      "empirical": 0.625
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "random_walk",
+      "nominal": 0.5,
+      "empirical": 0.25
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "random_walk",
+      "nominal": 0.8,
+      "empirical": 0.5
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "random_walk",
+      "nominal": 0.95,
+      "empirical": 0.8541666666666666
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "arima",
+      "nominal": 0.5,
+      "empirical": 0.4375
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "arima",
+      "nominal": 0.8,
+      "empirical": 0.6875
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "arima",
+      "nominal": 0.95,
+      "empirical": 0.8541666666666666
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "ets",
+      "nominal": 0.5,
+      "empirical": 0.4166666666666667
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "ets",
+      "nominal": 0.8,
+      "empirical": 0.6041666666666666
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "ets",
+      "nominal": 0.95,
+      "empirical": 0.8541666666666666
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "historical_mean",
+      "nominal": 0.5,
+      "empirical": 0.4375
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "historical_mean",
+      "nominal": 0.8,
+      "empirical": 0.7916666666666666
+    },
+    {
+      "target": "cpi_yoy",
+      "model": "historical_mean",
+      "nominal": 0.95,
+      "empirical": 1.0
+    },
+    {
+      "target": "unemployment",
+      "model": "lightgbm",
+      "nominal": 0.5,
+      "empirical": 0.1875
+    },
+    {
+      "target": "unemployment",
+      "model": "lightgbm",
+      "nominal": 0.8,
+      "empirical": 0.4166666666666667
+    },
+    {
+      "target": "unemployment",
+      "model": "lightgbm",
+      "nominal": 0.95,
+      "empirical": 0.5
+    },
+    {
+      "target": "unemployment",
+      "model": "random_walk",
+      "nominal": 0.5,
+      "empirical": 0.4166666666666667
+    },
+    {
+      "target": "unemployment",
+      "model": "random_walk",
+      "nominal": 0.8,
+      "empirical": 0.5
+    },
+    {
+      "target": "unemployment",
+      "model": "random_walk",
+      "nominal": 0.95,
+      "empirical": 0.6666666666666666
+    },
+    {
+      "target": "unemployment",
+      "model": "arima",
+      "nominal": 0.5,
+      "empirical": 0.5416666666666666
+    },
+    {
+      "target": "unemployment",
+      "model": "arima",
+      "nominal": 0.8,
+      "empirical": 0.5833333333333334
+    },
+    {
+      "target": "unemployment",
+      "model": "arima",
+      "nominal": 0.95,
+      "empirical": 0.6458333333333334
+    },
+    {
+      "target": "unemployment",
+      "model": "ets",
+      "nominal": 0.5,
+      "empirical": 0.5833333333333334
+    },
+    {
+      "target": "unemployment",
+      "model": "ets",
+      "nominal": 0.8,
+      "empirical": 0.75
+    },
+    {
+      "target": "unemployment",
+      "model": "ets",
+      "nominal": 0.95,
+      "empirical": 0.8125
+    },
+    {
+      "target": "unemployment",
+      "model": "historical_mean",
+      "nominal": 0.5,
+      "empirical": 0.22916666666666666
+    },
+    {
+      "target": "unemployment",
+      "model": "historical_mean",
+      "nominal": 0.8,
+      "empirical": 0.7291666666666666
+    },
+    {
+      "target": "unemployment",
+      "model": "historical_mean",
+      "nominal": 0.95,
+      "empirical": 0.9166666666666666
+    }
+  ],
+  "shap_top_features": [
+    {
+      "target": "cpi_yoy",
+      "rank": 1,
+      "feature": "trend_months",
+      "mean_abs_shap": 0.25637074706212465
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 2,
+      "feature": "claims_4wk_yoy",
+      "mean_abs_shap": 0.21333905915251442
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 3,
+      "feature": "claims",
+      "mean_abs_shap": 0.1516976134580709
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 4,
+      "feature": "cpi_yoy_lag1",
+      "mean_abs_shap": 0.15044404361996103
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 5,
+      "feature": "claims_4wk",
+      "mean_abs_shap": 0.12247976139734308
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 6,
+      "feature": "rent_yoy",
+      "mean_abs_shap": 0.12035998102769037
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 7,
+      "feature": "cpi_yoy",
+      "mean_abs_shap": 0.12006064550148832
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 8,
+      "feature": "ppi_3m",
+      "mean_abs_shap": 0.08956121578867073
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 9,
+      "feature": "gas_mom",
+      "mean_abs_shap": 0.08908495797443439
+    },
+    {
+      "target": "cpi_yoy",
+      "rank": 10,
+      "feature": "gas_yoy",
+      "mean_abs_shap": 0.08674371466843818
+    },
+    {
+      "target": "unemployment",
+      "rank": 1,
+      "feature": "trend_months",
+      "mean_abs_shap": 0.39528507933268003
+    },
+    {
+      "target": "unemployment",
+      "rank": 2,
+      "feature": "claims_4wk_yoy",
+      "mean_abs_shap": 0.18545358994213568
+    },
+    {
+      "target": "unemployment",
+      "rank": 3,
+      "feature": "unrate_ma3",
+      "mean_abs_shap": 0.09153815179540593
+    },
+    {
+      "target": "unemployment",
+      "rank": 4,
+      "feature": "claims",
+      "mean_abs_shap": 0.06811497526224652
+    },
+    {
+      "target": "unemployment",
+      "rank": 5,
+      "feature": "unrate_lag3",
+      "mean_abs_shap": 0.06571018796155947
+    },
+    {
+      "target": "unemployment",
+      "rank": 6,
+      "feature": "unrate_lag1",
+      "mean_abs_shap": 0.05322777934562448
+    },
+    {
+      "target": "unemployment",
+      "rank": 7,
+      "feature": "unrate",
+      "mean_abs_shap": 0.040795086432841965
+    },
+    {
+      "target": "unemployment",
+      "rank": 8,
+      "feature": "ppi_yoy",
+      "mean_abs_shap": 0.03421626545098497
+    },
+    {
+      "target": "unemployment",
+      "rank": 9,
+      "feature": "claims_4wk",
+      "mean_abs_shap": 0.029295853688283868
+    },
+    {
+      "target": "unemployment",
+      "rank": 10,
+      "feature": "unrate_diff1",
+      "mean_abs_shap": 0.019749764777806877
+    }
+  ],
+  "fomc": [
+    {
+      "model": "fomc_lightgbm",
+      "n_forecasts": 30,
+      "n_resolved": 30,
+      "brier": 0.14902087824521407,
+      "accuracy": 0.8666666666666667,
+      "n_changes": 11,
+      "brier_on_changes": 0.36665805781553257
+    },
+    {
+      "model": "persistence",
+      "n_forecasts": 30,
+      "n_resolved": 30,
+      "brier": 0.29473193583207064,
+      "accuracy": 0.8666666666666667,
+      "n_changes": 11,
+      "brier_on_changes": 0.5921118619850984
+    },
+    {
+      "model": "climatology",
+      "n_forecasts": 30,
+      "n_resolved": 30,
+      "brier": 0.519939203782057,
+      "accuracy": 0.6333333333333333,
+      "n_changes": 11,
+      "brier_on_changes": 1.1621813496616455
+    },
+    {
+      "model": "always_hold",
+      "n_forecasts": 30,
+      "n_resolved": 30,
+      "brier": 0.7333333333333333,
+      "accuracy": 0.6333333333333333,
+      "n_changes": 11,
+      "brier_on_changes": 2.0
+    }
+  ]
+}

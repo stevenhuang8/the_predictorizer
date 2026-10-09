@@ -6,6 +6,7 @@ Usage:
     metrics.rmse(results["prediction"], results["actual"])
     metrics.interval_coverage(zip(results["lower"], results["upper"]), results["actual"])
     metrics.interval_score(zip(results["lower"], results["upper"]), results["actual"], 0.8)
+    metrics.diebold_mariano(model_errors, random_walk_errors, horizon=3)  # (stat, p)
     metrics.brier_score({"cut": 0.2, "hold": 0.7, "hike": 0.1}, "hold")  # 0.14
 
     probs, hits = metrics.one_vs_rest(fomc_probabilities, fomc_outcomes)
@@ -106,6 +107,38 @@ def interval_score(
     below = np.maximum(lower - act, 0)
     above = np.maximum(act - upper, 0)
     return float(np.mean(upper - lower + penalty * (below + above)))
+
+
+def diebold_mariano(
+    errors_a: Iterable[float], errors_b: Iterable[float], horizon: int = 1
+) -> tuple[float, float]:
+    """Test of equal squared-error accuracy: (statistic, two-sided p-value).
+
+    Negative statistics mean `errors_a` are smaller. The loss differential's
+    variance allows for autocorrelation up to lag horizon - 1 (forecasts
+    `horizon` steps ahead overlap), and the Harvey, Leybourne & Newbold (1997)
+    small-sample correction is applied, with a t distribution on n - 1
+    degrees of freedom.
+    """
+    from scipy import stats  # type: ignore[import-untyped]
+
+    a, b = _paired(errors_a, errors_b)
+    if horizon < 1:
+        raise ValueError("horizon must be at least 1")
+    d = a**2 - b**2
+    n = len(d)
+    if n < 2 * horizon:
+        raise ValueError(f"need at least {2 * horizon} forecasts, got {n}")
+    centred = d - d.mean()
+    variance = np.mean(centred**2)
+    for lag in range(1, horizon):
+        variance += 2 * np.mean(centred[lag:] * centred[:-lag])
+    if variance <= 0:
+        raise ValueError("loss differential has no variance")
+    statistic = d.mean() / math.sqrt(variance / n)
+    statistic *= math.sqrt((n + 1 - 2 * horizon + horizon * (horizon - 1) / n) / n)
+    p_value = 2 * float(stats.t.sf(abs(statistic), df=n - 1))
+    return float(statistic), p_value
 
 
 def _check_probabilities(probabilities: Mapping[str, float]) -> None:

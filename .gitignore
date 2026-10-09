@@ -40,3 +40,4 @@ postgres-data/
 
 # Downloaded benchmark data
 data/cache/
+results/cache/

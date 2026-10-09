@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
     "scikit-learn>=1.9.1",
+    "scipy>=1.17.1",
     "shap>=0.51.0",
     "statsforecast>=2.0.1",
 ]

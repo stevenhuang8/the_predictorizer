@@ -104,6 +104,35 @@ def test_interval_score_rejects_bad_input() -> None:
         metrics.interval_score([(1.0, 0.0)], [0.5], 0.8)
 
 
+# Diebold-Mariano
+
+
+def test_diebold_mariano_detects_a_better_forecast() -> None:
+    rng = np.random.default_rng(RNG_SEED)
+    good = rng.normal(0, 1.0, 300)
+    bad = rng.normal(0, 1.5, 300)
+    statistic, p = metrics.diebold_mariano(good, bad, horizon=1)
+    assert statistic < 0 and p < 0.001
+    flipped, p_flipped = metrics.diebold_mariano(bad, good, horizon=1)
+    assert flipped == pytest.approx(-statistic) and p_flipped == pytest.approx(p)
+
+
+def test_diebold_mariano_does_not_reject_equal_forecasts() -> None:
+    rng = np.random.default_rng(RNG_SEED)
+    rejections = 0
+    for _ in range(200):
+        a, b = rng.normal(0, 1, (2, 60))
+        rejections += metrics.diebold_mariano(a, b, horizon=3)[1] < 0.05
+    assert rejections / 200 < 0.10  # nominal 5%; small-sample slack
+
+
+def test_diebold_mariano_rejects_bad_input() -> None:
+    with pytest.raises(ValueError, match="at least 6"):
+        metrics.diebold_mariano([1.0] * 5, [2.0] * 5, horizon=3)
+    with pytest.raises(ValueError, match="no variance"):
+        metrics.diebold_mariano([1.0] * 10, [2.0] * 10)
+
+
 # Brier
 
 
