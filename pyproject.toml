@@ -21,6 +21,9 @@ dependencies = [
     "statsforecast>=2.0.1",
 ]
 
+[project.scripts]
+eco-forecast = "eco_prediction.cli:cli"
+
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]
 build-backend = "uv_build"

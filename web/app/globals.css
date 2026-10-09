@@ -6,6 +6,15 @@
   --muted: #52514e;
   --line: #e4e3df;
   --panel: #ffffff;
+  /* Charts: model identity (dataviz reference palette, validated light and
+     dark), the cut / hold / hike diverging scale, and the forecast zone. */
+  --series-lightgbm: #2a78d6;
+  --series-random-walk: #eb6834;
+  --series-arima: #1baf7a;
+  --decision-cut: #2a78d6;
+  --decision-hold: #d6d4cc;
+  --decision-hike: #e34948;
+  --forecast-zone: #f3f2ee;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -15,6 +24,13 @@
     --muted: #c3c2b7;
     --line: #383835;
     --panel: #232322;
+    --series-lightgbm: #3987e5;
+    --series-random-walk: #d95926;
+    --series-arima: #199e70;
+    --decision-cut: #3987e5;
+    --decision-hold: #4a4a46;
+    --decision-hike: #e66767;
+    --forecast-zone: #212120;
   }
 }
 
@@ -24,6 +40,16 @@
   --color-muted: var(--muted);
   --color-line: var(--line);
   --color-panel: var(--panel);
+  /* Tailwind drops custom properties no CSS rule uses, so chart colors are
+     applied through these theme colors (stroke-series-lightgbm, ...) rather
+     than var() in inline styles. */
+  --color-series-lightgbm: var(--series-lightgbm);
+  --color-series-random-walk: var(--series-random-walk);
+  --color-series-arima: var(--series-arima);
+  --color-decision-cut: var(--decision-cut);
+  --color-decision-hold: var(--decision-hold);
+  --color-decision-hike: var(--decision-hike);
+  --color-forecast-zone: var(--forecast-zone);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

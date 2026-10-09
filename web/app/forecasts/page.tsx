@@ -1,20 +1,23 @@
 import type { Metadata } from "next";
-import { ComingSoon } from "../_components/coming-soon";
+import { Suspense } from "react";
+
+import { Dashboard } from "./dashboard";
 
 export const metadata: Metadata = { title: "Forecasts" };
 
 export default function ForecastsPage() {
   return (
-    <ComingSoon
-      title="Forecasts"
-      summary="The latest live forecast for every open question, from every model."
-      planned={[
-        "CPI and unemployment: point forecasts and 80% intervals by model and horizon",
-        "FOMC: cut / hold / hike probabilities for upcoming meetings",
-        "The top SHAP drivers behind each LightGBM forecast",
-        "The data vintage each forecast was made with",
-      ]}
-      source="questions, forecasts, model_versions, feature_snapshots"
-    />
+    <div className="space-y-2">
+      <h1 className="text-3xl font-semibold tracking-tight">Forecasts</h1>
+      <p className="max-w-2xl text-muted">
+        Where inflation, unemployment and Federal Reserve rates are heading, according
+        to each model, with how sure each one is.
+      </p>
+      <div className="pt-6">
+        <Suspense fallback={<p className="text-muted">Loading forecasts…</p>}>
+          <Dashboard />
+        </Suspense>
+      </div>
+    </div>
   );
 }

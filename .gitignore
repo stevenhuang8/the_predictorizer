@@ -41,3 +41,7 @@ postgres-data/
 # Downloaded benchmark data
 data/cache/
 results/cache/
+
+# Next.js frontend (web/.gitignore covers these too)
+web/.next/
+web/node_modules/
