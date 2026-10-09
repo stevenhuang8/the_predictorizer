@@ -3,8 +3,11 @@
 Usage:
     from eco_prediction.db.forecasts import get_explanation, save_forecast
 
-    question_id = get_or_create_question(
+    question_id, created = get_or_create_question(
         conn, "unemployment", date(2027, 1, 1), 3, resolution_rule="..."
+    )
+    fomc_week_ahead, _ = get_or_create_question(
+        conn, "fomc_decision", date(2027, 1, 27), lead_days=7
     )
     model_version_id = get_or_create_model_version(
         conn, "lightgbm", "unemployment-h3-20260930", parameters={...}
@@ -66,25 +69,34 @@ def get_or_create_question(
     conn: Connection,
     target: str,
     target_date: date,
-    horizon_months: int,
+    horizon_months: int | None = None,
     *,
+    lead_days: int | None = None,
     resolution_rule: str | None = None,
 ) -> tuple[int, bool]:
-    """The question's id, and whether it was created by this call."""
+    """The question's id, and whether it was created by this call.
+
+    Give exactly one of `horizon_months` (asked in the month `horizon_months`
+    before target_date's month) or `lead_days` (asked that many days before).
+    """
+    if (horizon_months is None) == (lead_days is None):
+        raise ValueError("give exactly one of horizon_months and lead_days")
+    key = (target, target_date, horizon_months, lead_days)
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO questions
-                (target, question_type, horizon_months, target_date, resolution_rule)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (target, target_date, horizon_months) DO NOTHING
+            INSERT INTO questions (target, question_type, target_date,
+                                   horizon_months, lead_days, resolution_rule)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT ON CONSTRAINT questions_target_date_horizon_key DO NOTHING
             RETURNING id
             """,
             (
                 target,
                 QUESTION_TYPES[target],
-                horizon_months,
                 target_date,
+                horizon_months,
+                lead_days,
                 resolution_rule,
             ),
         )
@@ -94,9 +106,11 @@ def get_or_create_question(
         cur.execute(
             """
             SELECT id FROM questions
-            WHERE target = %s AND target_date = %s AND horizon_months = %s
+            WHERE target = %s AND target_date = %s
+              AND horizon_months IS NOT DISTINCT FROM %s
+              AND lead_days IS NOT DISTINCT FROM %s
             """,
-            (target, target_date, horizon_months),
+            key,
         )
         row = cur.fetchone()
     assert row is not None

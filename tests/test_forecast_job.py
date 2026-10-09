@@ -21,7 +21,7 @@ from psycopg2.extensions import connection as Connection
 from eco_prediction.backtest.data import PointInTimeData, VintageStore
 from eco_prediction.backtest.harness import Forecast, add_months
 from eco_prediction.data.fomc import OUTCOMES, meetings_between
-from eco_prediction.db.forecasts import get_explanation
+from eco_prediction.db.forecasts import get_explanation, get_or_create_question
 from eco_prediction.db.migrate import migrate
 from eco_prediction.features.engineering import FeatureEngineer
 from eco_prediction.models.baselines import RandomWalkModel
@@ -33,7 +33,9 @@ from eco_prediction.scheduler.forecast_job import (
     Question,
     month_forecast_date,
     plan_questions,
+    pre_meeting_due,
     run_forecast_job,
+    run_pre_meeting_job,
     try_lock,
     unlock,
 )
@@ -401,3 +403,96 @@ def test_advisory_lock_blocks_a_second_run(db: Connection, test_dsn: str) -> Non
         unlock(other)
     finally:
         other.close()
+
+
+# Pre-meeting FOMC questions (lead_days, migration 006)
+
+
+def test_pre_meeting_due_from_a_week_before_until_the_meeting() -> None:
+    meeting = date(2026, 10, 28)
+    assert pre_meeting_due(date(2026, 10, 20)) == []
+    assert pre_meeting_due(date(2026, 10, 21)) == [meeting]  # due today
+    assert pre_meeting_due(date(2026, 10, 27)) == [meeting]  # catching up
+    assert pre_meeting_due(date(2026, 10, 28)) == []  # decided today: too late
+
+
+def test_pre_meeting_run_is_its_own_question(db: Connection) -> None:
+    meeting = date(2023, 9, 20)
+    monthly = run(db, Counting(), is_backtest=False)  # asks about it at h=1
+    counting = Counting()
+    result = run_pre_meeting_job(
+        db, STORE, meeting, is_backtest=False, fomc_models=counting.fomc()
+    )
+    assert monthly.failures == result.failures == []
+    assert (result.questions_created, result.forecasts_inserted) == (1, 2)
+    assert result.forecast_date == date(2023, 9, 13)
+
+    assert rows(
+        db,
+        """
+        SELECT horizon_months, lead_days, count(f.*), min(f.forecast_date),
+               min(m.version_tag), min(m.training_end)
+        FROM questions q
+        JOIN forecasts f ON f.question_id = q.id
+        JOIN model_versions m ON m.id = f.model_version_id
+        WHERE q.target = 'fomc_decision' AND q.target_date = %s
+        GROUP BY 1, 2 ORDER BY 2 NULLS FIRST
+        """,
+        meeting,
+    ) == [
+        (1, None, 2, FORECAST_DATE, "fomc-lead50-20230731", date(2023, 7, 31)),
+        (None, 7, 2, date(2023, 9, 13), "fomc-lead7-20230912", date(2023, 9, 12)),
+    ]
+
+    again = run_pre_meeting_job(
+        db, STORE, meeting, is_backtest=False, fomc_models=Counting().fomc()
+    )
+    assert (again.forecasts_inserted, again.forecasts_skipped) == (0, 2)
+    # Pre-meeting forecasts aren't the month's monthly run.
+    assert month_forecast_date(db, date(2023, 9, 30)) is None
+
+
+def test_pre_meeting_run_defaults_to_backtest_for_past_meetings(
+    db: Connection,
+) -> None:
+    result = run_pre_meeting_job(
+        db, STORE, date(2023, 11, 1), fomc_models=Counting().fomc()
+    )
+    assert result.is_backtest is True
+
+
+def test_a_question_has_exactly_one_horizon(db: Connection) -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        get_or_create_question(db, "fomc_decision", date(2027, 1, 27), 3, lead_days=7)
+    with pytest.raises(ValueError, match="exactly one"):
+        get_or_create_question(db, "fomc_decision", date(2027, 1, 27))
+    for horizon, lead in ((3, 7), (None, None)):
+        with pytest.raises(psycopg2.errors.CheckViolation), db.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO questions (target, question_type, target_date,
+                                       horizon_months, lead_days)
+                VALUES ('fomc_decision', 'probability', '2027-01-27', %s, %s)
+                """,
+                (horizon, lead),
+            )
+        db.rollback()
+
+
+def test_lead_questions_are_unique_and_reused(db: Connection) -> None:
+    meeting = date(2027, 1, 27)
+    first, created = get_or_create_question(db, "fomc_decision", meeting, lead_days=7)
+    again, created_again = get_or_create_question(
+        db, "fomc_decision", meeting, lead_days=7
+    )
+    monthly, _ = get_or_create_question(db, "fomc_decision", meeting, 3)
+    assert created and not created_again and first == again != monthly
+    with pytest.raises(psycopg2.errors.UniqueViolation), db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO questions (target, question_type, target_date, lead_days)
+            VALUES ('fomc_decision', 'probability', %s, 7)
+            """,
+            (meeting,),
+        )
+    db.rollback()

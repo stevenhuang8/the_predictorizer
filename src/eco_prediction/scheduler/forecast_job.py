@@ -16,6 +16,12 @@ backtest harness's convention, and asks, for a forecast made in month M:
 - CPI YoY and unemployment for months M + 1, M + 3 and M + 6 (`HORIZONS`);
 - the FOMC decision at the scheduled meeting in each of those months, if any.
 
+It also asks about each FOMC meeting `PRE_MEETING_LEAD_DAYS` (7) days before
+its decision day, as a separate question (`questions.lead_days`, migration
+006), so week-ahead and months-ahead FOMC forecasts are scored apart. The
+daily cron run makes it on the day it's due, or on the next run before the
+meeting if the machine was asleep, still dated and cut off 7 days before.
+
 Every model in `DEFAULT_NUMERIC` / `DEFAULT_FOMC` forecasts every question
 of its kind, baselines included, so the track record always has a reference.
 Models are refit on each run. LightGBM forecasts store their SHAP values and
@@ -55,7 +61,7 @@ from psycopg2.extensions import connection as Connection
 
 from eco_prediction.backtest.data import TARGETS, PointInTimeData, VintageStore
 from eco_prediction.backtest.harness import Forecaster, add_months, month_start
-from eco_prediction.data.fomc import RELEASE_LAGS, meetings_between
+from eco_prediction.data.fomc import FOMC_MEETINGS, RELEASE_LAGS, meetings_between
 from eco_prediction.db.connection import ConfigError, connection
 from eco_prediction.db.forecasts import (
     forecast_exists,
@@ -75,6 +81,9 @@ from eco_prediction.models.statistical import ARIMAModel
 log = logging.getLogger("eco_prediction.forecast_job")
 
 HORIZONS = (1, 3, 6)
+# FOMC meetings are also asked about this many days before the decision day,
+# when the model's edge over persistence is (Task 21).
+PRE_MEETING_LEAD_DAYS = 7
 NUMERIC_TARGETS = ("cpi_yoy", "unemployment")
 # pg_advisory_lock key held for the length of a run.
 LOCK_KEY = 2_202_210
@@ -126,9 +135,12 @@ DEFAULT_FOMC: tuple[FOMCModelSpec, ...] = (
 
 @dataclass(frozen=True)
 class Question:
+    """A monthly question (horizon_months) or a fixed-lead one (lead_days)."""
+
     target: str
     target_date: date
-    horizon_months: int
+    horizon_months: int | None = None
+    lead_days: int | None = None
 
 
 def today() -> date:
@@ -227,11 +239,13 @@ class _Run:
         log.info("%s %s: %s", model_type, tag, summary)
 
     def numeric(self, q: Question, question_id: int, spec: NumericModelSpec) -> None:
-        tag = f"{q.target}-h{q.horizon_months}-{self.cutoff:%Y%m%d}"
+        horizon = q.horizon_months
+        assert horizon is not None, "numeric questions are monthly"
+        tag = f"{q.target}-h{horizon}-{self.cutoff:%Y%m%d}"
 
         def make() -> str:
             view = PointInTimeData(self.store, TARGETS[q.target], self.cutoff)
-            model = spec.build(q.horizon_months)
+            model = spec.build(horizon)
             model.fit(view)
             forecast = model.predict(view, q.target_date)
             explanation, snapshot_id = None, None
@@ -247,7 +261,7 @@ class _Run:
                 spec.model_type,
                 tag,
                 parameters=model_parameters(
-                    model, target=q.target, horizon_months=q.horizon_months
+                    model, target=q.target, horizon_months=horizon
                 ),
                 training_end=self.cutoff,
                 code_hash=self.code_hash,
@@ -305,25 +319,18 @@ class _Run:
         self.attempt(question_id, spec.model_type, tag, make)
 
 
-def run_forecast_job(
+def forecast_questions(
     conn: Connection,
     store: VintageStore,
     forecast_date: date,
+    questions: Sequence[Question],
     *,
-    is_backtest: bool | None = None,
+    is_backtest: bool,
     numeric_models: Sequence[NumericModelSpec] = DEFAULT_NUMERIC,
     fomc_models: Sequence[FOMCModelSpec] = DEFAULT_FOMC,
-    targets: Sequence[str] = NUMERIC_TARGETS,
-    horizons: Sequence[int] = HORIZONS,
-    include_fomc: bool = True,
     code_hash: str | None = None,
 ) -> JobResult:
-    """Create the questions for forecast_date and store every model's forecasts.
-
-    `is_backtest` defaults to whether forecast_date is before today.
-    """
-    if is_backtest is None:
-        is_backtest = forecast_date < today()
+    """Create `questions` if new and store every model's forecast for each."""
     cutoff = forecast_date - timedelta(days=1)
     run = _Run(
         conn,
@@ -340,9 +347,6 @@ def run_forecast_job(
         "backtest" if is_backtest else "live",
     )
 
-    questions = plan_questions(
-        forecast_date, targets, horizons, include_fomc=include_fomc
-    )
     question_ids: list[tuple[Question, int]] = []
     for q in questions:
         question_id, created = get_or_create_question(
@@ -350,6 +354,7 @@ def run_forecast_job(
             q.target,
             q.target_date,
             q.horizon_months,
+            lead_days=q.lead_days,
             resolution_rule=RESOLUTION_RULES[q.target],
         )
         question_ids.append((q, question_id))
@@ -376,13 +381,84 @@ def run_forecast_job(
     return result
 
 
+def run_forecast_job(
+    conn: Connection,
+    store: VintageStore,
+    forecast_date: date,
+    *,
+    is_backtest: bool | None = None,
+    numeric_models: Sequence[NumericModelSpec] = DEFAULT_NUMERIC,
+    fomc_models: Sequence[FOMCModelSpec] = DEFAULT_FOMC,
+    targets: Sequence[str] = NUMERIC_TARGETS,
+    horizons: Sequence[int] = HORIZONS,
+    include_fomc: bool = True,
+    code_hash: str | None = None,
+) -> JobResult:
+    """The monthly run: forecast every question of forecast_date's month.
+
+    `is_backtest` defaults to whether forecast_date is before today.
+    """
+    return forecast_questions(
+        conn,
+        store,
+        forecast_date,
+        plan_questions(forecast_date, targets, horizons, include_fomc=include_fomc),
+        is_backtest=forecast_date < today() if is_backtest is None else is_backtest,
+        numeric_models=numeric_models,
+        fomc_models=fomc_models,
+        code_hash=code_hash,
+    )
+
+
+def pre_meeting_due(on: date, lead_days: int = PRE_MEETING_LEAD_DAYS) -> list[date]:
+    """Meetings whose pre-meeting forecast is due on or before `on`, still to come.
+
+    A forecast for meeting m is due at m - lead_days. Until m itself it can
+    still be made (with data cut off at m - lead_days - 1), so a run missed
+    while the machine was asleep catches up.
+    """
+    return [m for m in FOMC_MEETINGS if m - timedelta(days=lead_days) <= on < m]
+
+
+def run_pre_meeting_job(
+    conn: Connection,
+    store: VintageStore,
+    meeting: date,
+    *,
+    lead_days: int = PRE_MEETING_LEAD_DAYS,
+    is_backtest: bool | None = None,
+    fomc_models: Sequence[FOMCModelSpec] = DEFAULT_FOMC,
+    code_hash: str | None = None,
+) -> JobResult:
+    """Forecast `meeting` as of lead_days before it, as its own question.
+
+    `is_backtest` defaults to whether the meeting has already happened.
+    """
+    forecast_date = meeting - timedelta(days=lead_days)
+    return forecast_questions(
+        conn,
+        store,
+        forecast_date,
+        [Question("fomc_decision", meeting, lead_days=lead_days)],
+        is_backtest=meeting <= today() if is_backtest is None else is_backtest,
+        numeric_models=(),
+        fomc_models=fomc_models,
+        code_hash=code_hash,
+    )
+
+
 def month_forecast_date(conn: Connection, on: date) -> date | None:
-    """The date this month's live forecasts were made on, if any were."""
+    """The date this month's live monthly forecasts were made on, if any were.
+
+    Pre-meeting forecasts don't count: they run on their own schedule.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT MIN(forecast_date) FROM forecasts
-            WHERE NOT is_backtest AND forecast_date >= %s AND forecast_date <= %s
+            SELECT MIN(f.forecast_date) FROM forecasts f
+            JOIN questions q ON q.id = f.question_id
+            WHERE NOT f.is_backtest AND q.horizon_months IS NOT NULL
+              AND f.forecast_date >= %s AND f.forecast_date <= %s
             """,
             (month_start(on), on),
         )
@@ -484,20 +560,43 @@ def main(argv: list[str] | None = None) -> int:
                         )
                         forecast_date = earlier
                 ingest_failures = [] if args.no_ingest else refresh_data()
-                result = run_forecast_job(
-                    conn,
-                    VintageStore.from_db(backfill=True, release_lags=RELEASE_LAGS),
-                    forecast_date,
-                    is_backtest=forecast_date < now and args.date is not None,
-                    include_fomc=not args.no_fomc,
-                    code_hash=code_version(),
-                )
+                store = VintageStore.from_db(backfill=True, release_lags=RELEASE_LAGS)
+                code_hash = code_version()
+                results = [
+                    run_forecast_job(
+                        conn,
+                        store,
+                        forecast_date,
+                        is_backtest=forecast_date < now and args.date is not None,
+                        include_fomc=not args.no_fomc,
+                        code_hash=code_hash,
+                    )
+                ]
+                if not args.no_fomc:
+                    # With --date, only a meeting exactly the lead away; live,
+                    # any meeting whose pre-meeting forecast is due.
+                    lead = timedelta(days=PRE_MEETING_LEAD_DAYS)
+                    meetings = (
+                        [m for m in FOMC_MEETINGS if m - lead == args.date]
+                        if args.date
+                        else pre_meeting_due(now)
+                    )
+                    results += [
+                        run_pre_meeting_job(
+                            conn,
+                            store,
+                            m,
+                            is_backtest=args.date is not None and args.date < now,
+                            code_hash=code_hash,
+                        )
+                        for m in meetings
+                    ]
             finally:
                 unlock(conn)
     except ConfigError as exc:
         log.error("%s", exc)
         return 1
-    return 1 if result.failures or ingest_failures else 0
+    return 1 if any(r.failures for r in results) or ingest_failures else 0
 
 
 if __name__ == "__main__":
