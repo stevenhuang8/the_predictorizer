@@ -35,8 +35,9 @@ in only what's missing. A Postgres advisory lock keeps two runs from
 overlapping.
 
 Before forecasting, each run resolves questions whose answers have been
-published and scores their forecasts (`resolution_job`; `--no-resolve` skips
-it), so the one daily cron line covers both.
+published, scores their forecasts (`resolution_job`) and classifies why each
+missed (`postmortem.classifier`); `--no-resolve` skips all three. The one
+daily cron line covers everything.
 
 `--once-per-month` makes daily cron runs safe: if live forecasts already
 exist this month, the run reuses that month's forecast date and only fills
@@ -572,11 +573,15 @@ def main(argv: list[str] | None = None) -> int:
                 store = VintageStore.from_db(backfill=True, release_lags=RELEASE_LAGS)
                 if not args.no_resolve:
                     # Imported here: resolution_job imports this module.
+                    from eco_prediction.postmortem.classifier import (
+                        run_postmortems,
+                    )
                     from eco_prediction.scheduler.resolution_job import (
                         resolve_and_score,
                     )
 
                     resolve_and_score(conn, store, now)
+                    run_postmortems(conn, store, now)
                 code_hash = code_version()
                 results = [
                     run_forecast_job(

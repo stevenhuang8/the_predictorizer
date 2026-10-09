@@ -60,6 +60,7 @@ from eco_prediction.db.resolutions import (
     unresolved_questions,
     unscored_forecasts,
 )
+from eco_prediction.postmortem.classifier import run_postmortems
 from eco_prediction.scheduler.forecast_job import (
     DEFAULT_LOG_FILE,
     refresh_data,
@@ -233,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
                 failures = [] if args.no_ingest else refresh_data()
                 store = VintageStore.from_db(backfill=True, release_lags=RELEASE_LAGS)
                 resolve_and_score(conn, store, today())
+                run_postmortems(conn, store, today())
                 summary = score_summary(
                     scored_forecasts(conn, include_backtest=args.include_backtest)
                 )

@@ -50,12 +50,12 @@ QUESTION_TYPES = {
 }
 
 
-def _json_value(value: Any) -> Any:
+def json_value(value: Any) -> Any:
     """A JSON-safe copy: NaN to None, numpy scalars to Python numbers."""
     if isinstance(value, Mapping):
-        return {str(k): _json_value(v) for k, v in value.items()}
+        return {str(k): json_value(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_json_value(v) for v in value]
+        return [json_value(v) for v in value]
     if hasattr(value, "item"):  # numpy scalar
         value = value.item()
     if isinstance(value, float) and math.isnan(value):
@@ -140,7 +140,7 @@ def get_or_create_model_version(
             (
                 model_type,
                 version_tag,
-                Json(_json_value(parameters)) if parameters is not None else None,
+                Json(json_value(parameters)) if parameters is not None else None,
                 training_start,
                 training_end,
                 code_hash,
@@ -168,7 +168,7 @@ def save_feature_snapshot(
             INSERT INTO feature_snapshots (snapshot_date, features)
             VALUES (%s, %s) RETURNING id
             """,
-            (snapshot_date, Json(_json_value(features))),
+            (snapshot_date, Json(json_value(features))),
         )
         row = cur.fetchone()
     assert row is not None
@@ -268,7 +268,7 @@ def save_probability_forecast(
                 feature_snapshot_id,
                 forecast_date,
                 is_backtest,
-                Json(_json_value(probabilities)),
+                Json(json_value(probabilities)),
                 rationale,
             ),
         )
