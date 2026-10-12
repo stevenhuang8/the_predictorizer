@@ -171,7 +171,7 @@ RMSE is the typical size of the error in percentage points; lower is better.
 | **Data source** | FRED / ALFRED REST API |
 | **Frontend** | Next.js 16 (App Router), TypeScript, Tailwind CSS 4, ESLint + Prettier |
 | **Tooling** | uv (packages), pytest (250+ tests), ruff, mypy |
-| **Scheduling** | cron, plus a Postgres advisory lock so runs never overlap |
+| **Scheduling** | launchd (runs a missed 09:00 job when the Mac wakes), plus a Postgres advisory lock so runs never overlap |
 
 ---
 
@@ -233,8 +233,10 @@ uv run eco-forecast inspect                              # list stored questions
 uv run eco-forecast scores                               # live track record
 uv run eco-forecast backtest                             # regenerate the comparison report
 
-# 4. Run the daily pipeline (put the --once-per-month form in cron)
+# 4. Run the daily pipeline (by hand, or daily at 09:00 via launchd)
 uv run python -m eco_prediction.scheduler.forecast_job --once-per-month
+cp deploy/launchd/com.eco-prediction.forecast-job.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.eco-prediction.forecast-job.plist   # logs/launchd.log
 
 # 5. Dashboard
 cd web && cp .env.local.example .env.local && npm install && npm run dev   # http://localhost:3000

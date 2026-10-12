@@ -45,3 +45,6 @@ results/cache/
 # Next.js frontend (web/.gitignore covers these too)
 web/.next/
 web/node_modules/
+
+# Database backups (pg_dump), e.g. before a migration
+backups/

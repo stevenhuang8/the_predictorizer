@@ -168,7 +168,10 @@ def ingest_series(
     """Fetch one series and store its metadata and new vintages. Does not commit.
 
     Incremental runs only add vintages for periods within the requested
-    observation range; use `full=True` to backfill periods outside it.
+    observation range; use `full=True` to backfill periods outside it. Without
+    an `observation_start`, they start at the earliest period already stored,
+    so a series backfilled from 1990 isn't extended back to its first period
+    the next time FRED publishes a vintage.
     """
     info = client.get_series_info(series_id)
     source_pk = ensure_source(conn, *FRED_SOURCE)
@@ -187,6 +190,8 @@ def ingest_series(
         )
         if not new_vintages:
             return IngestResult(series_id, 0, 0, full=False)
+        if observation_start is None:
+            observation_start = min(prior)
         # Rows already in effect on new_vintages[0] come back dated to it;
         # drop_unchanged removes those against what is stored.
         observations = drop_unchanged(

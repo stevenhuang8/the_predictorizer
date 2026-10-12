@@ -203,6 +203,22 @@ def test_observation_range_is_passed_through(migrated: Connection) -> None:
     assert result.inserted == 2
 
 
+def test_incremental_run_keeps_the_backfilled_range(migrated: Connection) -> None:
+    # Backfilled from FEB, like DGS2/DTB3 from 1990. A later vintage re-reports
+    # every period in effect, JAN included; JAN must stay out.
+    fake = FakeFRED(HISTORY)
+    ingest_series(migrated, client(fake), "ICSA", observation_start=FEB)
+    v4 = date(2024, 5, 3)
+    fake.history = HISTORY + [Observation(FEB, v4, 206_000.0)]
+    result = ingest_series(migrated, client(fake), "ICSA")
+    migrated.commit()
+
+    assert fake.observation_calls[-1]["observation_start"] == FEB
+    assert result.inserted == 1
+    history = get_vintage_history(migrated, "ICSA")
+    assert set(history["observed_at"].dt.date) == {FEB}
+
+
 @pytest.fixture
 def pool(test_dsn: str) -> Iterator[None]:
     db.init_pool(test_dsn, maxconn=2)

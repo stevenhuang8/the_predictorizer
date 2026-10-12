@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The daily forecast job, run by launchd (replaces the 09:00 crontab line).
+
+  Unlike cron, launchd runs a StartCalendarInterval job that was missed while
+  the Mac was asleep as soon as it wakes (several missed days coalesce into
+  one run). It does not catch up runs missed while the Mac was shut down.
+
+  Install or update:
+    cp deploy/launchd/com.eco-prediction.forecast-job.plist ~/Library/LaunchAgents/
+    launchctl bootout gui/$(id -u)/com.eco-prediction.forecast-job 2>/dev/null
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.eco-prediction.forecast-job.plist
+  Run now:   launchctl kickstart gui/$(id -u)/com.eco-prediction.forecast-job
+  Status:    launchctl print gui/$(id -u)/com.eco-prediction.forecast-job
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.eco-prediction.forecast-job</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/uv</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>eco_prediction.scheduler.forecast_job</string>
+        <string>--once-per-month</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/stevenhuang/dev/AI_Projects/eco_prediction</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/stevenhuang/dev/AI_Projects/eco_prediction/logs/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/stevenhuang/dev/AI_Projects/eco_prediction/logs/launchd.log</string>
+</dict>
+</plist>
