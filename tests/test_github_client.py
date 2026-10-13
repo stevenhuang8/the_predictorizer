@@ -214,8 +214,8 @@ def test_other_403s_are_not_retried() -> None:
 
 
 def test_rate_limit_depends_on_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert GitHubClient(api_key=TOKEN).rate_limiter.max_calls == 30
-    assert GitHubClient().rate_limiter.max_calls == 10
+    assert GitHubClient(api_key=TOKEN).rate_limiter.max_calls == 27
+    assert GitHubClient().rate_limiter.max_calls == 9
 
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_env")
     assert GitHubClient.from_env().api_key == "ghp_env"

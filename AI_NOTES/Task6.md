@@ -53,7 +53,7 @@ uv run pytest tests/test_github_client.py
 ## What I did
 
 ### `ai/sources/base_client.py` (small change)
-- **A new `_rate_limit()` hook** sets the default limiter's (max calls, period). The default is still `MAX_CALLS`/`PERIOD`. GitHub uses it to pick 30 or 10 depending on the token.
+- **A new `_rate_limit()` hook** sets the default limiter's (max calls, period). The default is still `MAX_CALLS`/`PERIOD`. GitHub uses it to pick 27 or 9 depending on the token (originally 30 or 10; see "With the token").
 - **The rate-limit log now reports the limiter's own numbers.** The 25 base-client tests still pass.
 
 ### `ai/sources/github_client.py`
@@ -86,7 +86,7 @@ uv run pytest tests/test_github_client.py
   - A rate-limited 403 waits until the reset: 42s plus 1.
   - `Retry-After` wins on a 429.
   - Any other 403 isn't retried.
-  - The rate is 30 with a token and 10 without.
+  - The client's rate is 27 with a token and 9 without.
   - `GITHUB_TOKEN` is read from the environment, and an empty value is treated as unset.
 - **Stars:**
   - The merge doesn't double count.
@@ -114,7 +114,7 @@ uv run pytest tests/test_github_client.py
 
   | Run | Searches | With a token | Without |
   |---|---|---|---|
-  | Backfill, 2017-01 to 2026-09 | 117 months × 7 = 819 | ~28 min | ~82 min |
+  | Backfill, 2017-01 to 2026-09 | 117 months × 7 = 819 | ~31 min | ~91 min |
   | Live pull | 21 | under a minute | ~2 min |
   | Stars snapshot | ~30 | ~1 min | ~3 min |
 
@@ -126,3 +126,26 @@ uv run pytest tests/test_github_client.py
   - `stars --dry-run`: **21,510,135** stars on the top 1,000. It hit one rate-limited 403, waited out the reset (about 53s), and finished with exit 0.
   - **Cross-check through the client:** 2024-01 had 3,292 and 2025-01 had 4,525.
 - **The recent jump is worth watching:** about 4.5k a month in early 2025, 20k in September 2026. Part of it may be real (the agent-tooling boom). Part may be that new repos haven't yet been deleted or cleaned up the way older ones have. That cleanup is the drift the live re-counts will record. The full backfill wasn't dry-run here: without a token it takes about 80 minutes. Run `--backfill --dry-run` once the token is in place to see the whole curve.
+
+## With the token (2026-10-12)
+- **The token loads and works.** `GITHUB_TOKEN` is in `.env`, and GitHub's `/rate_limit` reports a search limit of 30 a minute.
+- **Full backfill dry run (real API, no database):** all 117 months, 2017-01 to 2026-09, in **28 minutes**, exit 0. Every month is nonzero; the smallest is 716 (2017-01).
+
+  | Month | New AI repos |
+  |---|---|
+  | 2017-01 | 716 |
+  | 2018-01 | 1,560 |
+  | 2019-01 | 1,623 |
+  | 2020-07 | 2,478 |
+  | 2022-01 | 2,522 |
+  | 2023-01 | 3,079 |
+  | 2024-01 | 3,292 |
+  | 2025-01 | 4,525 |
+  | 2025-07 | 7,791 |
+  | 2026-01 | 10,950 |
+  | 2026-07 | 25,539 |
+  | 2026-09 | 20,365 |
+
+  - **Steady growth to 2024, then a sharp acceleration from 2025.** The caveat above about recent months not yet being cleaned up applies most to 2026. The series will be hard to forecast across that break.
+- **The run hit the rate limit 27 times** out of 819 searches, even though the client paced at exactly 30 a minute. GitHub's window and the client's sliding window don't line up exactly. Each 403 waited for the reset, and nothing was lost.
+  - **Changed:** the client now keeps to **27 a minute with a token and 9 without** (90% of the limits), so this doesn't happen. The rate test was updated. The backfill wasn't rerun at the new pace: it would take about 31 minutes instead of 28.

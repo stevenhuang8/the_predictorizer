@@ -11,13 +11,13 @@ Two series (see `GitHubClient` for how each is counted):
 - **GITHUB_AI_ACTIVITY**, the forecast target `github_ai_activity`: public
   repos created each month with topic ai, machine-learning or deep-learning,
   each repo once. Backfill and live rows follow `ai/monthly_ingest.py`. A
-  backfill is 7 searches per month from 2017-01, ~28 minutes with a token.
+  backfill is 7 searches per month from 2017-01, ~31 minutes with a token.
 - **GITHUB_AI_STARS**: stars summed over the 1,000 most-starred such repos.
   Only today's star counts exist, so there's no backfill: `stars` stores one
   snapshot per calendar month, dated to the month it was taken in, and does
   nothing if this month already has one. ~30 searches, about a minute.
 
-`GITHUB_TOKEN` in `.env` raises search from 10 to 30 requests a minute.
+`GITHUB_TOKEN` in `.env` raises search from 10 to 30 requests a minute (the client keeps to 9 and 27).
 """
 
 from __future__ import annotations
