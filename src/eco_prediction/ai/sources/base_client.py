@@ -23,6 +23,7 @@ only where the API differs:
 - `_auth_params` / `_auth_headers`: credentials added to every request
 - `_is_retryable`: e.g. GitHub's 403 when its rate limit is exhausted
 - `_retry_after`: a server's own hint for how long to wait
+- `_rate_limit`: the default limit, when it depends on the instance
 - `_error_message`: pull the message out of an error body
 - `from_env`: load an API key; the default builds a keyless client
 
@@ -107,9 +108,12 @@ class BaseAPIClient:
         self._sleep = sleep
         # The default limiter sleeps through `_wait_for_rate_limit` so the wait
         # is logged. An injected one (e.g. shared between clients) isn't.
-        self.rate_limiter = rate_limiter or RateLimiter(
-            self.MAX_CALLS, self.PERIOD, clock=clock, sleep=self._wait_for_rate_limit
-        )
+        if rate_limiter is None:
+            max_calls, period = self._rate_limit()
+            rate_limiter = RateLimiter(
+                max_calls, period, clock=clock, sleep=self._wait_for_rate_limit
+            )
+        self.rate_limiter = rate_limiter
 
     @classmethod
     def from_env(cls, **kwargs: Any) -> Self:
@@ -131,6 +135,11 @@ class BaseAPIClient:
         self.close()
 
     # --- hooks for subclasses -------------------------------------------------
+
+    def _rate_limit(self) -> tuple[int, float]:
+        """(max calls, period in seconds) for the default limiter. Override when
+        the limit depends on the instance, e.g. whether a token was given."""
+        return self.MAX_CALLS, self.PERIOD
 
     def _auth_params(self) -> dict[str, str]:
         return {}
@@ -240,8 +249,8 @@ class BaseAPIClient:
         logger.info(
             "%s: rate limit of %d requests per %gs reached; waiting %.1fs",
             self.SOURCE,
-            self.MAX_CALLS,
-            self.PERIOD,
+            self.rate_limiter.max_calls,
+            self.rate_limiter.period,
             seconds,
         )
         self._sleep(seconds)
