@@ -107,3 +107,26 @@ uv run pytest tests/test_arxiv_client.py
 - `ruff check`, `ruff format --check` and `mypy` pass on `src/eco_prediction/ai` and the new tests.
 - **Live dry run (real arXiv, no database), 2026-10-12:** 2026-07 had 8,104 papers, 2026-08 had 9,109 and 2026-09 had 11,194.
 - **First full backfill dry run, at the original 3s pace:** failed after about a year of months, on repeated 429s. That led to the 5s rate and the long backoff.
+- **Second full backfill dry run, at 5s (2026-10-12):** all 201 months, 2010-01 to 2026-09, exit 0, with no 429s and no retries.
+  - Every month is nonzero. The smallest is 46 (2011-01).
+  - Selected months:
+
+    | Month | Papers |
+    |---|---|
+    | 2010-01 | 60 |
+    | 2015-01 | 196 |
+    | 2018-07 | 1,204 |
+    | 2020-07 | 2,853 |
+    | 2023-07 | 3,783 |
+    | 2024-07 | 5,245 |
+    | 2025-07 | 6,367 |
+    | 2026-09 | 11,194 |
+
+  - **Caveat: these levels look lower than the figures often quoted for AI/ML on arXiv.** They do match arXiv's own listing pages (see Decisions), so the API seems to be counting the same thing arXiv's listings count. For forecasting, what matters is that the series is consistent from month to month, which it is. Still worth knowing before quoting the numbers.
+  - **The early years are noisy** (2013-01: 471, 2013-07: 200). The models will see those swings.
+
+## Changed in AI task 5 (2026-10-12)
+- **The backfill, live-pull and CLI logic moved to `ai/monthly_ingest.py`,** shared with Hugging Face. `ingest_arxiv.py` now only defines `SERIES` and calls `run_cli`. The behavior is the same, with one change: the backfill commits **after each month**, not after each year.
+- **The month helpers and `MonthlyCount` moved to `ai/months.py`.**
+- **`ArxivClient.count_months(months)` was added.** The shared ingestion calls it.
+- **Signatures changed:** `ingest_backfill` and `ingest_live` now take the `MonthlySeries` as their second argument. `live_window` became `live_months`, which returns the list of months. The tests were updated to match.

@@ -27,13 +27,13 @@ queries ask for one result.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import date, timedelta
 from typing import Any
 
 import requests
 
+from eco_prediction.ai.months import MonthlyCount, iter_months, month_start, next_month
 from eco_prediction.ai.sources.base_client import BaseAPIClient, SourceAPIError
 
 BASE_URL = "https://export.arxiv.org/api"
@@ -41,12 +41,6 @@ AI_CATEGORIES = ("cs.AI", "cs.LG", "cs.CL")
 
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _OPENSEARCH = "{http://a9.com/-/spec/opensearch/1.1/}"
-
-
-@dataclass(frozen=True)
-class MonthlyCount:
-    month: date  # first day of the month
-    count: int
 
 
 class ArxivClient(BaseAPIClient):
@@ -74,14 +68,18 @@ class ArxivClient(BaseAPIClient):
         )
         return parse_total_results(resp.text)
 
+    def count_months(
+        self, months: Iterable[date], categories: Sequence[str] = AI_CATEGORIES
+    ) -> Iterator[MonthlyCount]:
+        """One query per month, each count yielded as soon as it arrives."""
+        for m in months:
+            yield MonthlyCount(month_start(m), self.count_submissions(m, categories))
+
     def monthly_counts(
         self, start: date, end: date, categories: Sequence[str] = AI_CATEGORIES
     ) -> list[MonthlyCount]:
         """One count per month from `start`'s month through `end`'s, inclusive."""
-        return [
-            MonthlyCount(m, self.count_submissions(m, categories))
-            for m in iter_months(start, end)
-        ]
+        return list(self.count_months(iter_months(start, end), categories))
 
     def _error_message(self, resp: requests.Response) -> str:
         return _feed_error(resp.text) or resp.text[:500]
@@ -108,27 +106,6 @@ def parse_total_results(feed: str) -> int:
     if total is None or not total.strip().isdigit():
         raise SourceAPIError("arxiv feed has no totalResults", 200, "arxiv")
     return int(total)
-
-
-def month_start(d: date) -> date:
-    return d.replace(day=1)
-
-
-def next_month(d: date) -> date:
-    return date(d.year + d.month // 12, d.month % 12 + 1, 1)
-
-
-def iter_months(start: date, end: date) -> Iterator[date]:
-    """First day of each month from `start`'s through `end`'s."""
-    month, last = month_start(start), month_start(end)
-    while month <= last:
-        yield month
-        month = next_month(month)
-
-
-def last_complete_month(today: date) -> date:
-    """First day of the latest month that has fully ended before `today`."""
-    return month_start(month_start(today) - timedelta(days=1))
 
 
 def _feed_error(feed: str | ET.Element) -> str | None:

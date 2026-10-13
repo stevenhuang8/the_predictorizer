@@ -12,18 +12,12 @@ from typing import Any
 import pytest
 from psycopg2.extensions import connection as Connection
 
-from eco_prediction.ai import ingest_arxiv
-from eco_prediction.ai.ingest_arxiv import (
-    SERIES,
-    ingest_backfill,
-    ingest_live,
-    live_window,
-)
+from eco_prediction.ai import ingest_arxiv, monthly_ingest
+from eco_prediction.ai.ingest_arxiv import SERIES
+from eco_prediction.ai.monthly_ingest import ingest_backfill, ingest_live, live_months
+from eco_prediction.ai.months import MonthlyCount, iter_months, last_complete_month
 from eco_prediction.ai.sources.arxiv_client import (
     ArxivClient,
-    MonthlyCount,
-    iter_months,
-    last_complete_month,
     parse_total_results,
     submissions_query,
 )
@@ -187,8 +181,8 @@ def test_month_helpers() -> None:
     assert last_complete_month(date(2024, 3, 1)) == FEB
     assert last_complete_month(date(2024, 3, 31)) == FEB
     assert last_complete_month(date(2024, 1, 15)) == date(2023, 12, 1)
-    assert live_window(date(2024, 4, 12), 3) == (JAN, MAR)
-    assert live_window(date(2024, 4, 12), 1) == (MAR, MAR)
+    assert live_months(date(2024, 4, 12), 3) == [JAN, FEB, MAR]
+    assert live_months(date(2024, 4, 12), 1) == [MAR]
 
 
 # --- ingestion --------------------------------------------------------------
@@ -209,7 +203,7 @@ def stored(conn: Connection) -> list[tuple[Any, ...]]:
             WHERE s.series_id = %s
             ORDER BY o.observed_at, o.as_of
             """,
-            (SERIES.series_id,),
+            (SERIES.info.series_id,),
         )
         return cur.fetchall()
 
@@ -217,7 +211,9 @@ def stored(conn: Connection) -> list[tuple[Any, ...]]:
 def test_backfill_stores_reconstructed_rows_known_after_each_month(
     migrated: Connection,
 ) -> None:
-    result = ingest_backfill(migrated, FakeArxiv({JAN: 100, FEB: 120}), JAN, FEB)
+    result = ingest_backfill(
+        migrated, SERIES, FakeArxiv({JAN: 100, FEB: 120}), JAN, FEB
+    )
 
     assert (result.fetched, result.inserted) == (2, 2)
     assert stored(migrated) == [
@@ -231,22 +227,22 @@ def test_backfill_stores_reconstructed_rows_known_after_each_month(
             FROM series s JOIN sources src ON src.id = s.source_id
             WHERE s.series_id = %s
             """,
-            (SERIES.series_id,),
+            (SERIES.info.series_id,),
         )
         assert cur.fetchone() == ("ai", "Papers", "Monthly", "arXiv")
     # A backtest standing on the last day of January can't see January yet.
     assert (
-        get_series_value_as_of(migrated, SERIES.series_id, JAN, date(2024, 1, 31))
+        get_series_value_as_of(migrated, SERIES.info.series_id, JAN, date(2024, 1, 31))
         is None
     )
-    assert get_series_value_as_of(migrated, SERIES.series_id, JAN, FEB) == 100
+    assert get_series_value_as_of(migrated, SERIES.info.series_id, JAN, FEB) == 100
 
 
 def test_backfill_skips_stored_months_so_it_resumes(migrated: Connection) -> None:
-    ingest_backfill(migrated, FakeArxiv({JAN: 100}), JAN, JAN)
+    ingest_backfill(migrated, SERIES, FakeArxiv({JAN: 100}), JAN, JAN)
     fake = FakeArxiv({JAN: 999, FEB: 120, MAR: 130})
 
-    result = ingest_backfill(migrated, fake, JAN, MAR)
+    result = ingest_backfill(migrated, SERIES, fake, JAN, MAR)
 
     assert fake.asked == [FEB, MAR]
     assert (result.fetched, result.inserted) == (2, 2)
@@ -254,11 +250,13 @@ def test_backfill_skips_stored_months_so_it_resumes(migrated: Connection) -> Non
 
 
 def test_live_stores_new_and_changed_months_only(migrated: Connection) -> None:
-    ingest_backfill(migrated, FakeArxiv({JAN: 100, FEB: 120}), JAN, FEB)
+    ingest_backfill(migrated, SERIES, FakeArxiv({JAN: 100, FEB: 120}), JAN, FEB)
     today = date(2024, 4, 12)
 
     # JAN unchanged, FEB revised (a late cross-list), MAR new.
-    result = ingest_live(migrated, FakeArxiv({JAN: 100, FEB: 121, MAR: 130}), today)
+    result = ingest_live(
+        migrated, SERIES, FakeArxiv({JAN: 100, FEB: 121, MAR: 130}), today
+    )
 
     assert (result.fetched, result.inserted) == (3, 2)
     assert stored(migrated) == [
@@ -270,16 +268,18 @@ def test_live_stores_new_and_changed_months_only(migrated: Connection) -> None:
 
     # Same counts the next day: nothing new.
     again = ingest_live(
-        migrated, FakeArxiv({JAN: 100, FEB: 121, MAR: 130}), date(2024, 4, 13)
+        migrated, SERIES, FakeArxiv({JAN: 100, FEB: 121, MAR: 130}), date(2024, 4, 13)
     )
     assert again.inserted == 0
 
 
 def test_zero_count_is_refused(migrated: Connection) -> None:
     with pytest.raises(SourceAPIError, match="refusing to store"):
-        ingest_backfill(migrated, FakeArxiv({JAN: 100, FEB: 0}), JAN, FEB)
+        ingest_backfill(migrated, SERIES, FakeArxiv({JAN: 100, FEB: 0}), JAN, FEB)
     with pytest.raises(SourceAPIError, match="refusing to store"):
-        ingest_live(migrated, FakeArxiv({JAN: 0, FEB: 1, MAR: 1}), date(2024, 4, 2))
+        ingest_live(
+            migrated, SERIES, FakeArxiv({JAN: 0, FEB: 1, MAR: 1}), date(2024, 4, 2)
+        )
 
 
 # --- command line -----------------------------------------------------------
@@ -292,7 +292,7 @@ def test_dry_run_prints_rows_without_a_database(
         raise AssertionError("dry run touched the database")
 
     fake = FakeArxiv({JAN: 100, FEB: 120, MAR: 130})
-    monkeypatch.setattr(ingest_arxiv, "connection", fail_if_connected)
+    monkeypatch.setattr(monthly_ingest, "connection", fail_if_connected)
 
     code = ingest_arxiv.main(
         ["--backfill", "--start", "2024-01-01", "--dry-run"],

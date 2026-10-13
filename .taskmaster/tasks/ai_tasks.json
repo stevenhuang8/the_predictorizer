@@ -36,7 +36,7 @@
         "dependencies": [
           "2"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": []
       },
       {
@@ -49,7 +49,7 @@
         "dependencies": [
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": []
       },
       {
@@ -62,7 +62,7 @@
         "dependencies": [
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": []
       },
       {
