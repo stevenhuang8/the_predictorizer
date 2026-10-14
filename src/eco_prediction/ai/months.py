@@ -1,4 +1,4 @@
-"""Calendar-month helpers for the AI series, which are all monthly counts.
+"""Calendar-month helpers for the AI series, which are all monthly.
 
 A month is represented by its first day.
 """
@@ -13,7 +13,7 @@ from datetime import date, timedelta
 @dataclass(frozen=True)
 class MonthlyCount:
     month: date  # first day of the month
-    count: int
+    count: float  # a count, or for Epoch's step series the month's running max
 
 
 def month_start(d: date) -> date:

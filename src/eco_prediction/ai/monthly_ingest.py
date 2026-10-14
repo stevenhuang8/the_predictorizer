@@ -1,4 +1,5 @@
-"""Shared ingestion for the AI domain's monthly count series (arXiv, Hugging Face).
+"""Shared ingestion for the AI domain's monthly series (arXiv, Hugging Face,
+GitHub, Epoch AI).
 
 Only months that have ended are stored; the current month is never stored
 half-counted. Two kinds of rows:
@@ -12,8 +13,10 @@ half-counted. Two kinds of rows:
   `as_of` = today and `reconstructed = false` for each month that is new or
   whose count changed since its latest row.
 
-A count of zero is refused: every series here has had activity in every
+A count of zero is refused: every count series here has had activity in every
 month since its first, so a zero means the source failed, not a quiet month.
+Series whose zero is real (a benchmark score) set `allow_zero`; negatives are
+always refused.
 
 Each source module defines a `MonthlySeries` and calls `run_cli` with a client
 that implements `MonthlyCounter`.
@@ -64,6 +67,8 @@ class MonthlySeries:
     info: AISeriesInfo
     first_month: date  # earliest month the source can count; backfill default
     live_months: int = 3  # ended months a live pull re-counts
+    allow_zero: bool = False  # True when 0 is a real value, e.g. a 0% score
+    value_format: str = ".0f"  # how dry runs and progress print a value
 
 
 @dataclass(frozen=True)
@@ -158,7 +163,7 @@ def live_months(today: date, months: int) -> list[date]:
 
 
 def _check(series: MonthlySeries, c: MonthlyCount) -> None:
-    if c.count <= 0:
+    if c.count < 0 or (c.count == 0 and not series.allow_zero):
         raise SourceAPIError(
             f"{series.info.series_id}: source returned {c.count} for "
             f"{c.month:%Y-%m}; refusing to store it",
@@ -166,9 +171,10 @@ def _check(series: MonthlySeries, c: MonthlyCount) -> None:
         )
 
 
-def format_row(row: AIObservation) -> str:
+def format_row(row: AIObservation, value_format: str = ".0f") -> str:
     kind = "reconstructed" if row.reconstructed else "live"
-    return f"{row.observed_at:%Y-%m}  {row.value:>7.0f}  as_of={row.as_of}  {kind}"
+    value = format(row.value, f">7{value_format}")
+    return f"{row.observed_at:%Y-%m}  {value}  as_of={row.as_of}  {kind}"
 
 
 def run_cli(
@@ -227,7 +233,7 @@ def run_cli(
                         else live_rows(series, [c], {}, run_date)
                     )
                     for row in rows:
-                        print(format_row(row), flush=True)
+                        print(format_row(row, series.value_format), flush=True)
                 return 0
             with connection() as conn:
                 if args.backfill:
@@ -238,7 +244,8 @@ def run_cli(
                         months[0],
                         months[-1],
                         on_row=lambda row, n: print(
-                            f"{sid} {format_row(row)}  inserted={n}", flush=True
+                            f"{sid} {format_row(row, series.value_format)}  inserted={n}",
+                            flush=True,
                         ),
                     )
                 else:
