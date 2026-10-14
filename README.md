@@ -89,14 +89,15 @@ The second domain is purely additive: the economy tables, jobs, CLI and dashboar
 | GitHub AI activity (new repos monthly, stars snapshot) | GitHub Search API, from 2017 | ✅ Ingestion built |
 | Benchmark SOTA (GPQA Diamond, SWE-bench Verified, ARC-AGI-2; best so far, monthly) | Epoch AI | ✅ Ingestion built |
 | Largest training run (log10 FLOP, best so far, monthly) | Epoch AI | ✅ Ingestion built |
-| Binary events ("Will SOTA on X exceed Y% by D?") | Generated thresholds + Metaculus / Polymarket | Planned |
+| Binary events ("Will SOTA on X exceed Y% by D?") | Generated thresholds + curated markets | Planned |
+| Market benchmark: AI-tagged Polymarket markets (≥ $10k traded) with daily prices | Polymarket Gamma + CLOB APIs | ✅ Ingestion built |
 
 **What's different from the economy:**
 - **Reconstructed vintages are labeled.** AI sources don't keep revision history, so live pulls are snapshotted with `as_of` = fetch date, and backfills built from timestamped records (e.g., arXiv submission dates) are flagged `reconstructed = true`.
-- **Binary questions** resolve yes/no and are scored with the Brier score, benchmarked against Metaculus and Polymarket.
+- **Binary questions** resolve yes/no and are scored with the Brier score, benchmarked against Polymarket prices (stored point-in-time in `platform_questions` / `platform_probabilities`). Metaculus is on hold: its API terms forbid evaluating AI models without written permission.
 - **The LLM forecaster** gets a point-in-time context bundle (question, recent values, stats-model forecasts, retrieved documents published before the forecast date) and returns structured JSON with a rationale. Its prompt, model ID and raw response are stored for every forecast. Backtests only use questions resolving after the model's training cutoff, so it can't recall the answer.
 
-**Roadmap:** foundation (safety net, migrations 009–010, `ai/` package) ✅ → data (arXiv, HF, GitHub, Epoch ✅; Metaculus, Polymarket) → questions, features, baselines, ARIMA/ETS and LightGBM → LLM forecaster, retrieval corpus and ensemble → live job, `--domain ai` CLI and dashboard section. Per-task notes are in `AI_NOTES/`.
+**Roadmap:** foundation (safety net, migrations 009–010, `ai/` package) ✅ → data (arXiv, HF, GitHub, Epoch, Polymarket ✅; Metaculus pending permission) → questions, features, baselines, ARIMA/ETS and LightGBM → LLM forecaster, retrieval corpus and ensemble → live job, `--domain ai` CLI and dashboard section. Per-task notes are in `AI_NOTES/`.
 
 ---
 
@@ -106,7 +107,7 @@ The second domain is purely additive: the economy tables, jobs, CLI and dashboar
 |---|---|
 | **Data and models** | Python 3.13, pandas, statsforecast (ARIMA/ETS), LightGBM, SHAP, scikit-learn, SciPy, matplotlib; Claude via the `anthropic` SDK (planned) |
 | **Database** | PostgreSQL 16 in Docker, psycopg2, hand-written SQL migrations |
-| **Data sources** | FRED / ALFRED; arXiv, Hugging Face Hub, GitHub, Epoch AI; Metaculus, Polymarket (planned) |
+| **Data sources** | FRED / ALFRED; arXiv, Hugging Face Hub, GitHub, Epoch AI, Polymarket |
 | **Frontend** | Next.js 16, TypeScript, Tailwind CSS 4 |
 | **Tooling** | uv, pytest (400+ tests), ruff, mypy; launchd + Postgres advisory lock for the daily job |
 
@@ -116,7 +117,7 @@ The second domain is purely additive: the economy tables, jobs, CLI and dashboar
 eco_prediction/
 ├── src/eco_prediction/
 │   ├── data/          # FRED client, ingestion, FOMC calendar + decision labels
-│   ├── ai/            # AI domain: sources/ (arXiv, HF, GitHub, Epoch clients), monthly ingestion
+│   ├── ai/            # AI domain: sources/ (arXiv, HF, GitHub, Epoch, Polymarket clients), ingestion
 │   ├── db/            # connection pool, migration runner, per-table helpers
 │   ├── backtest/      # point-in-time views, walk-forward harness, metrics
 │   ├── features/      # economy feature pipeline
@@ -124,7 +125,7 @@ eco_prediction/
 │   ├── scheduler/     # daily forecast job + resolution/scoring job
 │   ├── postmortem/    # classifies each miss
 │   └── cli.py         # `eco-forecast` command
-├── migrations/        # numbered SQL migrations (001–010)
+├── migrations/        # numbered SQL migrations (001–011)
 ├── tests/  results/  web/
 ├── NOTES/             # economy task notes
 └── AI_NOTES/          # AI domain task notes
@@ -160,6 +161,7 @@ uv run python -m eco_prediction.ai.ingest_huggingface --backfill
 uv run python -m eco_prediction.ai.ingest_github --backfill
 uv run python -m eco_prediction.ai.ingest_github stars   # monthly stars snapshot
 uv run python -m eco_prediction.ai.ingest_epoch --backfill   # benchmark SOTA + compute
+uv run python -m eco_prediction.ai.ingest_polymarket         # markets + daily prices (run daily)
 
 # 5. Daily pipeline (by hand, or at 09:00 via launchd) and dashboard
 uv run python -m eco_prediction.scheduler.forecast_job --once-per-month
