@@ -1,4 +1,4 @@
-"""Tests for the AI domain's schema additions (migrations 009 and 010)."""
+"""Tests for the AI domain's schema additions (migrations 009, 010 and 012)."""
 
 from __future__ import annotations
 
@@ -83,12 +83,29 @@ def test_numeric_ai_question(migrated: Connection) -> None:
         question_type="numeric_interval",
         horizon_months=3,
         lead_days=None,
-        question_key=None,
+        question_key="ARXIV_AI_SUBMISSIONS",
     )
     migrated.commit()
     assert rows(migrated, "SELECT target, domain FROM questions") == [
         ("arxiv_ai_submissions", "ai")
     ]
+
+
+def test_numeric_questions_sharing_a_target_need_different_keys(
+    migrated: Connection,
+) -> None:
+    sota = {
+        "target": "benchmark_sota",
+        "question_type": "numeric_interval",
+        "target_date": date(2026, 11, 1),
+        "horizon_months": 1,
+        "lead_days": None,
+    }
+    add_question(migrated, **sota, question_key="EPOCH_GPQA_SOTA")
+    add_question(migrated, **sota, question_key="EPOCH_SWEBENCH_SOTA")
+    migrated.commit()
+    with pytest.raises(psycopg2.errors.UniqueViolation):
+        add_question(migrated, **sota, question_key="EPOCH_GPQA_SOTA")
 
 
 def test_binary_questions_on_the_same_date_need_different_keys(
@@ -105,33 +122,39 @@ def test_binary_questions_on_the_same_date_need_different_keys(
     ("cols", "constraint"),
     [
         # Each case breaks exactly one rule.
+        ({"question_type": "probability"}, "questions_target_type"),
         (
-            {"question_type": "probability", "question_key": None},
+            {"target": "fomc_decision", "domain": "economy", "question_key": None},
             "questions_target_type",
         ),
-        ({"target": "fomc_decision", "domain": "economy"}, "questions_target_type"),
         (
             {"target": "hf_new_models", "horizon_months": 3, "lead_days": None},
             "questions_target_type",
         ),
         (
-            {
-                "target": "fomc_decision",
-                "question_type": "probability",
-                "question_key": None,
-            },
+            {"target": "fomc_decision", "question_type": "probability"},
             "questions_target_domain",
         ),
-        ({"domain": "economy"}, "questions_target_domain"),
+        ({"domain": "economy", "question_key": None}, "questions_target_domain"),
         ({"domain": "space"}, "questions_domain_check"),
-        ({"question_key": None}, "questions_key_iff_binary"),
+        ({"question_key": None}, "questions_key_iff_ai"),
+        (
+            {
+                "target": "hf_new_models",
+                "question_type": "numeric_interval",
+                "horizon_months": 3,
+                "lead_days": None,
+                "question_key": None,
+            },
+            "questions_key_iff_ai",
+        ),
         (
             {
                 "target": "cpi_yoy",
                 "question_type": "numeric_interval",
                 "domain": "economy",
             },
-            "questions_key_iff_binary",
+            "questions_key_iff_ai",
         ),
         ({"lead_days": None}, "questions_one_horizon"),
     ],
@@ -187,9 +210,19 @@ def test_existing_economy_rows_survive_the_migration(
     for path in sorted(MIGRATIONS_DIR.glob("00[1-8]_*.sql")):
         shutil.copy(path, tmp_path)
     migrate(conn, tmp_path)
-    cpi, _ = get_or_create_question(conn, "cpi_yoy", date(2026, 11, 1), 3)
-    fomc, _ = get_or_create_question(
-        conn, "fomc_decision", date(2026, 10, 28), lead_days=7
+    # Raw SQL in 008's columns: get_or_create_question writes 009's since 012.
+    cpi, fomc = (
+        int(r[0])
+        for r in rows(
+            conn,
+            """
+            INSERT INTO questions (target, question_type, target_date,
+                                   horizon_months, lead_days)
+            VALUES ('cpi_yoy', 'numeric_interval', '2026-11-01', 3, NULL),
+                   ('fomc_decision', 'probability', '2026-10-28', NULL, 7)
+            RETURNING id
+            """,
+        )
     )
     add_resolution(conn, fomc, actual_outcome="hold")
     conn.commit()

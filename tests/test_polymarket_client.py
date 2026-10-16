@@ -135,6 +135,7 @@ def test_open_market_has_its_yes_price_and_no_outcome() -> None:
     assert m.closes_at == datetime(2027, 1, 1, 4, 59, tzinfo=UTC)
     assert m.metadata["event_title"] == "OpenAI hardware by...?"
     assert m.metadata["condition_id"] == "0xcond1"
+    assert m.metadata["closed_at"] is None
 
 
 @pytest.mark.parametrize(
@@ -159,6 +160,8 @@ def test_a_proposed_resolution_is_not_an_outcome_yet() -> None:
     m = parse_market(raw, EVENT)
 
     assert m is not None and m.closed and m.outcome is None
+    # Kept for curated questions (AI task 10): trading stopped at the close.
+    assert m.metadata["closed_at"] == "2026-01-01T07:14:25+00:00"
 
 
 @pytest.mark.parametrize(

@@ -47,7 +47,15 @@ QUESTION_TYPES = {
     "cpi_yoy": "numeric_interval",
     "unemployment": "numeric_interval",
     "fomc_decision": "probability",
+    # AI domain (migrations 009, 010)
+    "arxiv_ai_submissions": "numeric_interval",
+    "hf_new_models": "numeric_interval",
+    "github_ai_activity": "numeric_interval",
+    "benchmark_sota": "numeric_interval",
+    "largest_training_run": "numeric_interval",
+    "ai_binary_event": "binary",
 }
+ECONOMY_TARGETS = frozenset({"cpi_yoy", "unemployment", "fomc_decision"})
 
 
 def json_value(value: Any) -> Any:
@@ -73,31 +81,49 @@ def get_or_create_question(
     *,
     lead_days: int | None = None,
     resolution_rule: str | None = None,
+    question_key: str | None = None,
+    question_text: str | None = None,
+    platform_question_id: int | None = None,
 ) -> tuple[int, bool]:
     """The question's id, and whether it was created by this call.
 
     Give exactly one of `horizon_months` (asked in the month `horizon_months`
     before target_date's month) or `lead_days` (asked that many days before).
+    AI questions also need a `question_key` (migration 012): the series id for
+    numeric ones, the event key for binary ones. Economy questions have none.
+    A curated binary question links the platform market it mirrors through
+    `platform_question_id` (migration 013).
     """
     if (horizon_months is None) == (lead_days is None):
         raise ValueError("give exactly one of horizon_months and lead_days")
-    key = (target, target_date, horizon_months, lead_days)
+    domain = "economy" if target in ECONOMY_TARGETS else "ai"
+    if (question_key is None) != (domain == "economy"):
+        raise ValueError(
+            f"{target!r}: AI questions need a question_key, economy ones none"
+        )
+    key = (target, target_date, horizon_months, lead_days, question_key)
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO questions (target, question_type, target_date,
-                                   horizon_months, lead_days, resolution_rule)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO questions (target, question_type, domain, target_date,
+                                   horizon_months, lead_days, resolution_rule,
+                                   question_key, question_text,
+                                   platform_question_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT ON CONSTRAINT questions_target_date_horizon_key DO NOTHING
             RETURNING id
             """,
             (
                 target,
                 QUESTION_TYPES[target],
+                domain,
                 target_date,
                 horizon_months,
                 lead_days,
                 resolution_rule,
+                question_key,
+                question_text,
+                platform_question_id,
             ),
         )
         row = cur.fetchone()
@@ -109,6 +135,7 @@ def get_or_create_question(
             WHERE target = %s AND target_date = %s
               AND horizon_months IS NOT DISTINCT FROM %s
               AND lead_days IS NOT DISTINCT FROM %s
+              AND question_key IS NOT DISTINCT FROM %s
             """,
             key,
         )

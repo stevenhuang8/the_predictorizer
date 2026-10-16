@@ -176,6 +176,8 @@ def parse_market(raw: Mapping[str, Any], event: Mapping[str, Any]) -> Market | N
             "yes_token": yes_token,
             "volume": float(raw.get("volumeNum") or 0.0),
             "uma_resolution_status": status,
+            # When trading stopped, kept even when there's no clean outcome.
+            "closed_at": closed_at.isoformat() if closed and closed_at else None,
             "outcome_prices": prices,
         },
     )

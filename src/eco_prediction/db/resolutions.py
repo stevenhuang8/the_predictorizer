@@ -50,14 +50,17 @@ class UnscoredForecast:
 
 
 def unresolved_questions(conn: Connection) -> list[OpenQuestion]:
-    """Questions with no resolution yet, oldest target first."""
+    """Economy questions with no resolution yet, oldest target first.
+
+    AI questions resolve from other series (AI task 11), so they're left out.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT q.id, q.target::text, q.target_date, q.horizon_months, q.lead_days
             FROM questions q
             LEFT JOIN resolutions r ON r.question_id = q.id
-            WHERE r.id IS NULL
+            WHERE r.id IS NULL AND q.domain = 'economy'
             ORDER BY q.target_date, q.id
             """
         )
@@ -99,13 +102,13 @@ class NumericResolution:
 
 
 def numeric_resolutions(conn: Connection) -> list[NumericResolution]:
-    """Resolved numeric questions, with the vintage of their stored latest value."""
+    """Resolved numeric economy questions, with the vintage of their latest value."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT q.id, q.target::text, q.target_date, r.latest_as_of
             FROM resolutions r JOIN questions q ON q.id = r.question_id
-            WHERE r.actual_value IS NOT NULL
+            WHERE r.actual_value IS NOT NULL AND q.domain = 'economy'
             ORDER BY q.target_date, q.id
             """
         )

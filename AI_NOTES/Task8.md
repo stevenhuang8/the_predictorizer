@@ -1,6 +1,6 @@
 # AI Task 8: Polymarket client and platform tables (Metaculus deferred)
 
-Done on 2026-10-14, for Polymarket. **Metaculus is deferred** (see below). Nothing has been written to the live `eco_forecast` database yet: migration 011, the first run and the daily runs are the user's to do (see Quick reference). No key is needed.
+Done on 2026-10-14, for Polymarket. **Metaculus is deferred** (see below). Migration 011 was applied to the live database on 2026-10-15, together with AI task 9's 012. The first Polymarket run and the daily runs are the user's to do (see Quick reference). No key is needed.
 
 ## Quick reference
 
