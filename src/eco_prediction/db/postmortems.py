@@ -57,7 +57,10 @@ def _float(value: Any) -> float | None:
 
 
 def forecasts_to_review(conn: Connection) -> list[ForecastToReview]:
-    """Scored forecasts with no post-mortem, or only an automatic one."""
+    """Scored economy forecasts with no post-mortem, or only an automatic one.
+
+    AI forecasts get LLM-drafted post-mortems instead (AI task 22).
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -69,7 +72,7 @@ def forecasts_to_review(conn: Connection) -> list[ForecastToReview]:
             JOIN resolutions r ON r.question_id = q.id
             JOIN model_versions m ON m.id = f.model_version_id
             LEFT JOIN postmortems p ON p.forecast_id = f.id
-            WHERE f.scored_at IS NOT NULL
+            WHERE f.scored_at IS NOT NULL AND q.domain = 'economy'
               AND (p.id IS NULL OR p.classified_by = 'auto')
             ORDER BY f.id
             """

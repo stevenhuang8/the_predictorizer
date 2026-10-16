@@ -276,10 +276,12 @@ def test_backfill_then_a_late_evaluation_adds_live_vintages(
     late = GPQA + "model-f,0.85,0.88,2026-07-04,6\n"
     client, _ = client_with({"gpqa_diamond.csv": late})
     live = ingest_live(migrated, gpqa.series, EpochCounter(client, gpqa), TODAY)
-    assert (live.fetched, live.inserted) == (4, 3)
+    # July to September change; June is unchanged and only confirmed live.
+    assert (live.fetched, live.inserted) == (4, 4)
 
     assert stored(migrated, "EPOCH_GPQA_SOTA") == [
         (JUN, JUL, 72.0, True),
+        (JUN, TODAY, 72.0, False),
         (JUL, AUG, 72.0, True),
         (JUL, TODAY, 88.0, False),
         (AUG, SEP, 81.0, True),

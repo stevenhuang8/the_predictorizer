@@ -10,8 +10,11 @@ half-counted. Two kinds of rows:
   committed as soon as it's counted, and months already stored are skipped, so
   an interrupted backfill resumes.
 - **Live**: re-counts the last few ended months and stores a row with
-  `as_of` = today and `reconstructed = false` for each month that is new or
-  whose count changed since its latest row.
+  `as_of` = today and `reconstructed = false` for each month that is new,
+  whose count changed since its latest row, or that has no live row yet. The
+  last case confirms a backfilled month with a genuine vintage even when the
+  count is unchanged: AI questions resolve to a month's first live value
+  (AI tasks 9 and 11), so every month a live pull has seen must have one.
 
 A count of zero is refused: every count series here has had activity in every
 month since its first, so a zero means the source failed, not a quiet month.
@@ -26,7 +29,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Protocol
@@ -94,14 +97,27 @@ def live_rows(
     counts: Iterable[MonthlyCount],
     prior: Mapping[date, float | None],
     today: date,
+    confirmed: Collection[date] = frozenset(),
 ) -> list[AIObservation]:
-    """Live rows for months that are new or whose count changed."""
+    """Live rows for months that are new, changed, or not yet `confirmed` (no
+    live row so far)."""
     rows = []
     for c in counts:
         _check(series, c)
-        if prior.get(c.month) != c.count:
+        if prior.get(c.month) != c.count or c.month not in confirmed:
             rows.append(AIObservation(c.month, today, c.count, reconstructed=False))
     return rows
+
+
+def live_months_stored(conn: Connection, series_pk: int) -> set[date]:
+    """Months with at least one live (not reconstructed) row."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT observed_at FROM observations"
+            " WHERE series_id = %s AND NOT reconstructed",
+            (series_pk,),
+        )
+        return {row[0] for row in cur.fetchall()}
 
 
 def ingest_backfill(
@@ -149,7 +165,7 @@ def ingest_live(
     counts = list(
         counter.count_months(live_months(today, months or series.live_months))
     )
-    rows = live_rows(series, counts, prior, today)
+    rows = live_rows(series, counts, prior, today, live_months_stored(conn, series_pk))
     inserted = insert_ai_observations(conn, series_pk, rows)
     return IngestResult("live", len(counts), inserted)
 

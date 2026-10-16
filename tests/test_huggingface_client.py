@@ -273,12 +273,13 @@ def test_backfill_and_live_rows(migrated: Connection) -> None:
     live = ingest_live(
         migrated, SERIES, FakeHF({JUL: 119_500, AUG: 130_000, SEP: 140_000}), today
     )
-    assert (live.fetched, live.inserted) == (3, 2)
+    assert (live.fetched, live.inserted) == (3, 3)
 
     assert stored(migrated) == [
         (JUL, AUG, 120_000, True),
         (JUL, today, 119_500, False),  # models deleted since
         (AUG, SEP, 130_000, True),
+        (AUG, today, 130_000, False),  # unchanged, confirmed live
         (SEP, today, 140_000, False),
     ]
     with migrated.cursor() as cur:

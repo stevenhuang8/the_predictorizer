@@ -249,24 +249,26 @@ def test_backfill_skips_stored_months_so_it_resumes(migrated: Connection) -> Non
     assert stored(migrated)[0] == (JAN, FEB, 100, True)
 
 
-def test_live_stores_new_and_changed_months_only(migrated: Connection) -> None:
+def test_live_stores_new_changed_and_unconfirmed_months(migrated: Connection) -> None:
     ingest_backfill(migrated, SERIES, FakeArxiv({JAN: 100, FEB: 120}), JAN, FEB)
     today = date(2024, 4, 12)
 
-    # JAN unchanged, FEB revised (a late cross-list), MAR new.
+    # JAN unchanged but only backfilled so far (confirmed by a live row, which
+    # AI questions resolve to), FEB revised (a late cross-list), MAR new.
     result = ingest_live(
         migrated, SERIES, FakeArxiv({JAN: 100, FEB: 121, MAR: 130}), today
     )
 
-    assert (result.fetched, result.inserted) == (3, 2)
+    assert (result.fetched, result.inserted) == (3, 3)
     assert stored(migrated) == [
         (JAN, FEB, 100, True),
+        (JAN, today, 100, False),
         (FEB, MAR, 120, True),
         (FEB, today, 121, False),
         (MAR, today, 130, False),
     ]
 
-    # Same counts the next day: nothing new.
+    # Same counts the next day: every month has a live row, so nothing new.
     again = ingest_live(
         migrated, SERIES, FakeArxiv({JAN: 100, FEB: 121, MAR: 130}), date(2024, 4, 13)
     )

@@ -8,6 +8,7 @@ Usage:
 
     for q in unresolved_questions(conn):            # OpenQuestion(id, target, ...)
         save_resolution(conn, q.id, actual_as_of=date(2026, 12, 10), value=3.1)
+    resolve_binary_question(conn, question_id, "yes", date(2027, 1, 1))  # AI
     for f in unscored_forecasts(conn):              # forecasts of resolved questions
         save_score(conn, f.id, error=..., in_interval=..., brier_score=None)
     for q in numeric_resolutions(conn):             # refresh revised values
@@ -15,13 +16,18 @@ Usage:
     scored_forecasts(conn)                          # DataFrame for score summaries
 
 Like the rest of `db`, these functions don't commit; the caller does.
+
+The readers that feed the economy's resolution job (`unresolved_questions`,
+`numeric_resolutions`, `unscored_forecasts`, `scored_forecasts`) default to
+the economy domain; the AI domain resolves and scores its questions with
+`ai/resolutions.py` (AI task 11) and passes `domain="ai"`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 from psycopg2.extensions import connection as Connection
@@ -47,6 +53,15 @@ class UnscoredForecast:
     probabilities: dict[str, float] | None
     actual_value: float | None
     actual_outcome: str | None
+    question_type: str = "numeric_interval"  # 'binary' is scored differently
+
+
+# The answer each question type takes (migrations 003 and 010).
+OUTCOMES = {
+    "numeric_interval": None,  # a value
+    "probability": frozenset({"cut", "hold", "hike"}),  # FOMC
+    "binary": frozenset({"yes", "no"}),
+}
 
 
 def unresolved_questions(conn: Connection) -> list[OpenQuestion]:
@@ -75,10 +90,28 @@ def save_resolution(
     value: float | None = None,
     outcome: str | None = None,
 ) -> int:
-    """Record a question's actual value (numeric) or outcome (FOMC)."""
+    """Record a question's actual value (numeric) or outcome (FOMC, binary).
+
+    Raises ValueError if the answer doesn't fit the question's type: a value
+    for numeric questions, cut/hold/hike for FOMC, yes/no for binary ones.
+    """
     if (value is None) == (outcome is None):
         raise ValueError("give exactly one of value and outcome")
     with conn.cursor() as cur:
+        cur.execute(
+            "SELECT question_type::text FROM questions WHERE id = %s", (question_id,)
+        )
+        found = cur.fetchone()
+        if found is None:
+            raise ValueError(f"no question with id {question_id}")
+        allowed = OUTCOMES[found[0]]
+        if allowed is None and outcome is not None:
+            raise ValueError(f"question {question_id} is numeric; give a value")
+        if allowed is not None and outcome not in allowed:
+            raise ValueError(
+                f"question {question_id} ({found[0]}) resolves to one of "
+                f"{sorted(allowed)}, not {outcome if value is None else value!r}"
+            )
         cur.execute(
             """
             INSERT INTO resolutions
@@ -91,6 +124,20 @@ def save_resolution(
         row = cur.fetchone()
     assert row is not None
     return int(row[0])
+
+
+def resolve_binary_question(
+    conn: Connection,
+    question_id: int,
+    outcome: Literal["yes", "no"],
+    as_of_date: date,
+) -> int:
+    """Record a binary question's yes/no outcome, known as of as_of_date.
+
+    Raises ValueError if the question isn't binary or the outcome isn't
+    yes/no, and psycopg2's UniqueViolation if it's already resolved.
+    """
+    return save_resolution(conn, question_id, actual_as_of=as_of_date, outcome=outcome)
 
 
 @dataclass(frozen=True)
@@ -129,18 +176,23 @@ def save_latest(
         )
 
 
-def unscored_forecasts(conn: Connection) -> list[UnscoredForecast]:
-    """Forecasts of resolved questions that haven't been scored."""
+def unscored_forecasts(
+    conn: Connection, *, domain: str = "economy"
+) -> list[UnscoredForecast]:
+    """Forecasts of resolved questions in `domain` that haven't been scored."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT f.id, f.prediction, f.interval_lower, f.interval_upper,
-                   f.probabilities, r.actual_value, r.actual_outcome
+                   f.probabilities, r.actual_value, r.actual_outcome,
+                   q.question_type::text
             FROM forecasts f
             JOIN resolutions r ON r.question_id = f.question_id
-            WHERE f.scored_at IS NULL
+            JOIN questions q ON q.id = f.question_id
+            WHERE f.scored_at IS NULL AND q.domain = %s
             ORDER BY f.id
-            """
+            """,
+            (domain,),
         )
         rows = cur.fetchall()
     return [
@@ -152,9 +204,13 @@ def unscored_forecasts(conn: Connection) -> list[UnscoredForecast]:
             probabilities,
             _float(actual_value),
             actual_outcome,
+            question_type,
         )
-        for id, prediction, lower, upper, probabilities, actual_value, actual_outcome in rows
-    ]
+        for (
+            id, prediction, lower, upper, probabilities, actual_value, actual_outcome,
+            question_type,
+        ) in rows
+    ]  # fmt: skip
 
 
 def _float(value: Any) -> float | None:
@@ -181,14 +237,15 @@ def save_score(
 
 
 def scored_forecasts(
-    conn: Connection, *, include_backtest: bool = False
+    conn: Connection, *, include_backtest: bool = False, domain: str = "economy"
 ) -> pd.DataFrame:
-    """Every scored forecast with its question, model and actual, one row each."""
+    """Every scored forecast in `domain` with its question, model and actual."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT q.target::text AS target, q.target_date, q.horizon_months,
-                   q.lead_days, m.model_type, m.parameters, f.id AS forecast_id,
+                   q.lead_days, q.question_type::text AS question_type,
+                   q.question_key, m.model_type, m.parameters, f.id AS forecast_id,
                    f.forecast_date, f.is_backtest, f.prediction, f.interval_lower,
                    f.interval_upper, f.error, f.in_interval, f.brier_score,
                    r.actual_value, r.actual_outcome, r.latest_value
@@ -197,9 +254,10 @@ def scored_forecasts(
             JOIN resolutions r ON r.question_id = q.id
             JOIN model_versions m ON m.id = f.model_version_id
             WHERE f.scored_at IS NOT NULL AND (%s OR NOT f.is_backtest)
+              AND q.domain = %s
             ORDER BY q.target, q.target_date, m.model_type
             """,
-            (include_backtest,),
+            (include_backtest, domain),
         )
         columns = [c.name for c in cur.description or []]
         frame = pd.DataFrame(cur.fetchall(), columns=columns)

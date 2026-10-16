@@ -24,6 +24,8 @@ Usage:
 
     save_probability_forecast(conn, fomc_question_id, model_version_id,
                               date(2026, 10, 1), {"cut": .2, "hold": .7, "hike": .1})
+    save_binary_forecast(conn, ai_question_id, model_version_id,
+                         date(2026, 10, 1), 0.35)        # {"yes": .35, "no": .65}
 
 Like the rest of `db`, these functions don't commit; the caller does.
 JSON values (parameters, features) may hold NaN or numpy numbers; NaN is
@@ -302,6 +304,36 @@ def save_probability_forecast(
         row = cur.fetchone()
     assert row is not None
     return int(row[0])
+
+
+def save_binary_forecast(
+    conn: Connection,
+    question_id: int,
+    model_version_id: int,
+    forecast_date: date,
+    probability_yes: float,
+    *,
+    feature_snapshot_id: int | None = None,
+    is_backtest: bool = False,
+    rationale: str | None = None,
+) -> int:
+    """Insert one yes/no forecast and return its id.
+
+    Stored as {"yes": p, "no": 1 - p}, like any categorical forecast; binary
+    questions are scored on p alone (`metrics.brier_score_binary`).
+    """
+    if not 0 <= probability_yes <= 1:
+        raise ValueError(f"probability must be in [0, 1]: {probability_yes}")
+    return save_probability_forecast(
+        conn,
+        question_id,
+        model_version_id,
+        forecast_date,
+        {"yes": probability_yes, "no": 1 - probability_yes},
+        feature_snapshot_id=feature_snapshot_id,
+        is_backtest=is_backtest,
+        rationale=rationale,
+    )
 
 
 def get_explanation(conn: Connection, forecast_id: int) -> Explanation | None:

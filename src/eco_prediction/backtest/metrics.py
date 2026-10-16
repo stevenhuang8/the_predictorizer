@@ -8,6 +8,8 @@ Usage:
     metrics.interval_score(zip(results["lower"], results["upper"]), results["actual"], 0.8)
     metrics.diebold_mariano(model_errors, random_walk_errors, horizon=3)  # (stat, p)
     metrics.brier_score({"cut": 0.2, "hold": 0.7, "hike": 0.1}, "hold")  # 0.14
+    metrics.brier_score_binary(0.8, "yes")                                # 0.04
+    metrics.brier_decomposition(p_yes, hits)  # reliability, resolution, uncertainty
 
     probs, hits = metrics.one_vs_rest(fomc_probabilities, fomc_outcomes)
     curve = metrics.calibration_curve(probs, hits)
@@ -19,8 +21,15 @@ filter out unresolved forecasts first (`summarize` keeps rows with an actual).
 
 `brier_score` is the multi-category form, the sum of squared differences over
 every category, so it runs from 0 (all probability on the outcome) to 2 (all
-on a wrong category). A binary event is two categories, e.g.
-{"yes": p, "no": 1 - p}.
+on a wrong category). FOMC forecasts are scored with it.
+
+Binary (yes/no) questions use `brier_score_binary`, (p - outcome)^2 on the
+probability of yes, from 0 to 1: the form Polymarket and Metaculus
+comparisons use. It's half the multi-category score of {"yes": p, "no": 1 - p},
+so the two scales must not be mixed in one average. The binary calibration
+metrics (`log_loss_binary`, `expected_calibration_error`,
+`brier_decomposition`, `brier_skill_score`) take the probability of yes and
+1/0 outcomes, like `calibration_curve`.
 """
 
 from __future__ import annotations
@@ -170,6 +179,98 @@ def mean_brier_score(
     if not probabilities:
         raise ValueError("nothing to score")
     return float(np.mean([brier_score(p, o) for p, o in zip(probabilities, outcomes)]))
+
+
+BINARY_OUTCOMES = {"yes": 1.0, "no": 0.0}
+
+
+def _binary(
+    probabilities: Iterable[float], outcomes: Iterable[str | float]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Probabilities of yes and 1/0 outcomes ('yes'/'no' or 1/0 accepted)."""
+    hits = [BINARY_OUTCOMES[o] if isinstance(o, str) else o for o in outcomes]
+    probs, act = _paired(probabilities, hits)
+    if ((probs < 0) | (probs > 1)).any():
+        raise ValueError("probabilities must be in [0, 1]")
+    if not np.isin(act, (0, 1)).all():
+        raise ValueError("outcomes must be yes/no or 1/0")
+    return probs, act
+
+
+def brier_score_binary(predicted_prob: float, actual: str) -> float:
+    """(p - 1)^2 if the answer was yes, p^2 if no; p is the probability of yes."""
+    if actual not in BINARY_OUTCOMES:
+        raise ValueError(f"outcome must be 'yes' or 'no', not {actual!r}")
+    if not 0 <= predicted_prob <= 1:
+        raise ValueError(f"probability must be in [0, 1]: {predicted_prob}")
+    return (predicted_prob - BINARY_OUTCOMES[actual]) ** 2
+
+
+def mean_brier_score_binary(
+    probabilities: Iterable[float], outcomes: Iterable[str | float]
+) -> float:
+    probs, hits = _binary(probabilities, outcomes)
+    return float(np.mean((probs - hits) ** 2))
+
+
+def log_loss_binary(
+    probabilities: Iterable[float],
+    outcomes: Iterable[str | float],
+    eps: float = 1e-15,
+) -> float:
+    """Mean negative log-likelihood; probabilities are clipped to [eps, 1 - eps]
+    so a confident miss costs a lot rather than infinity."""
+    probs, hits = _binary(probabilities, outcomes)
+    probs = np.clip(probs, eps, 1 - eps)
+    return float(-np.mean(hits * np.log(probs) + (1 - hits) * np.log(1 - probs)))
+
+
+def expected_calibration_error(
+    probabilities: Iterable[float], outcomes: Iterable[str | float], n_bins: int = 10
+) -> float:
+    """Mean |predicted - observed| over `calibration_curve` bins, weighted by
+    each bin's share of forecasts. 0 is perfectly calibrated."""
+    probs, hits = _binary(probabilities, outcomes)
+    curve = calibration_curve(probs, hits, n_bins)
+    gaps = (curve["mean_predicted"] - curve["observed_frequency"]).abs()
+    return float((gaps * curve["count"]).sum() / len(probs))
+
+
+def brier_decomposition(
+    probabilities: Iterable[float], outcomes: Iterable[str | float], n_bins: int = 10
+) -> dict[str, float]:
+    """Murphy's decomposition, Brier = reliability - resolution + uncertainty.
+
+    - reliability: how far each bin's forecasts sit from what happened (lower
+      is better calibrated);
+    - resolution: how far the bins' frequencies spread from the base rate
+      (higher separates yes from no better);
+    - uncertainty: base rate x (1 - base rate), fixed by the questions.
+    Computed over `calibration_curve` bins, so the identity is exact only when
+    forecasts within a bin are equal; `brier` is the actual mean score.
+    """
+    probs, hits = _binary(probabilities, outcomes)
+    curve = calibration_curve(probs, hits, n_bins)
+    weights = curve["count"] / len(probs)
+    base_rate = float(hits.mean())
+    reliability = (
+        weights * (curve["mean_predicted"] - curve["observed_frequency"]) ** 2
+    ).sum()
+    resolution = (weights * (curve["observed_frequency"] - base_rate) ** 2).sum()
+    return {
+        "brier": float(np.mean((probs - hits) ** 2)),
+        "reliability": float(reliability),
+        "resolution": float(resolution),
+        "uncertainty": base_rate * (1 - base_rate),
+    }
+
+
+def brier_skill_score(brier: float, reference_brier: float) -> float:
+    """1 - brier / reference: 0 matches the reference (e.g. the market or the
+    base rate), 1 is perfect, negative is worse."""
+    if reference_brier <= 0:
+        raise ValueError("the reference Brier score must be positive")
+    return 1 - brier / reference_brier
 
 
 def one_vs_rest(
