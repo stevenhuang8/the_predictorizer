@@ -99,7 +99,7 @@ The second domain is purely additive: the economy tables, jobs, CLI and dashboar
 - **Binary questions** resolve yes/no and are scored with the binary Brier score, (p − outcome)², plus log loss, calibration error and Murphy's decomposition, benchmarked against Polymarket prices (stored point-in-time in `platform_questions` / `platform_probabilities`). Metaculus is on hold: its API terms forbid evaluating AI models without written permission.
 - **The LLM forecaster** gets a point-in-time context bundle (question, recent values, stats-model forecasts, retrieved documents published before the forecast date) and returns structured JSON with a rationale. Its prompt, model ID and raw response are stored for every forecast. Backtests only use questions resolving after the model's training cutoff, so it can't recall the answer.
 
-**Roadmap:** foundation (safety net, migrations 009–010, `ai/` package) ✅ → data (arXiv, HF, GitHub, Epoch, Polymarket ✅; Metaculus pending permission) → questions (numeric, threshold and curated ✅), resolution and binary scoring ✅ → features ✅ → baselines ✅ → ARIMA/ETS and LightGBM → LLM forecaster, retrieval corpus and ensemble → live job, `--domain ai` CLI and dashboard section. Per-task notes are in `AI_NOTES/`.
+**Roadmap:** foundation (safety net, migrations 009–010, `ai/` package) ✅ → data (arXiv, HF, GitHub, Epoch, Polymarket ✅; Metaculus pending permission) → questions (numeric, threshold and curated ✅), resolution and binary scoring ✅ → features ✅ → baselines ✅ → ARIMA/ETS ✅ → LightGBM → LLM forecaster, retrieval corpus and ensemble → live job, `--domain ai` CLI and dashboard section. Per-task notes are in `AI_NOTES/`.
 
 ---
 
