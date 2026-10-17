@@ -108,3 +108,10 @@ uv run pytest tests/test_huggingface_client.py
     | 2026-09 | 92,008 |
 
   - **The series is not smooth.** It grew about 20× from 2022 to 2025, then went sideways at around 70–120k a month since 2025, with jumps such as 2026-01. Some of that is probably bulk uploads and spam that hasn't been deleted yet. That is worth keeping in mind when judging forecast errors on this series.
+
+## Update 2026-10-16: pacing with a token
+- `HF_TOKEN` is now in `.env` (a free account's fine-grained read token).
+- **The client paces at 900 requests per 5 minutes with a token** (`TOKEN_MAX_CALLS`), and still 450 without one. It used to stay at 450 either way.
+- **Hugging Face's API limits** (huggingface.co/docs/hub/rate-limits): 500 anonymous per IP, 1,000 for a free account's token.
+- **The token's quota is separate from the IP's anonymous one.** That was checked from the `ratelimit` headers: the tokened request showed 990 left while the anonymous quota was at 420. So a tokened run doesn't slow an untokened one on the same machine.
+- **README downloads count against the separate "resolvers" bucket** (3,000 / 5,000), not the API one.

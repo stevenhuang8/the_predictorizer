@@ -344,3 +344,8 @@ def test_cli_dry_run_prints_newest_first_and_closes_the_client(
         "2026-08   130000  as_of=2026-10-12  live",
         "2026-07   120000  as_of=2026-10-12  live",
     ]
+
+
+def test_a_token_doubles_the_pace() -> None:
+    assert HuggingFaceClient()._rate_limit() == (450, 300.0)
+    assert HuggingFaceClient(api_key="hf_x")._rate_limit() == (900, 300.0)

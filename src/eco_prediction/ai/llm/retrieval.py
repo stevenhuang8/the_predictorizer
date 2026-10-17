@@ -17,7 +17,12 @@ and retrieval only returns documents published by the end of `as_of_date`
 (UTC), the harness's cutoff convention: pass the day before the forecast.
 
 With a `query`, documents are matched by Postgres full-text search with
-English stemming and ranked by `ts_rank_cd`, newest first among ties:
+English stemming and ranked by `ts_rank`, newest first among ties. Title
+words weigh more than body words (migration 015), and the rank is divided by
+1 + log(document length), so a long text repeating the query's words doesn't
+bury a document whose title is the match. (`ts_rank_cd` scores every
+matching stretch of text, so repetition piles up and length normalization
+can't undo it.)
 - `match="any"` (the default) matches documents with any of the query's
   words, so the ones sharing the most rank first. That suits a query made
   from a question's text: "best AI model end of year" still finds "...the
@@ -166,7 +171,7 @@ def retrieve_documents(
     if query:
         params["query"] = query
         where.append("(numnode(q) = 0 OR search @@ q)")
-        rank = "ts_rank_cd(search, q) DESC,"
+        rank = "ts_rank(search, q, 1) DESC,"  # title weighted, / (1 + log length)
         source = f"retrieval_documents, LATERAL {_TSQUERY[match]} AS q"
     else:
         rank, source = "", "retrieval_documents"

@@ -6,6 +6,7 @@ Usage:
     with GitHubClient.from_env() as gh:
         n = gh.count_new_repos(date(2024, 1, 1))  # AI repos created Jan 2024
         stars = gh.top_starred_total()            # stars on the top 1,000 now
+        releases = list(gh.iter_releases("vllm-project/vllm"))  # AI task 17
 
 Two measures, both over public, non-fork repos tagged with any of AI_TOPICS:
 - **New repos in a month:** each repo counted once. Search can't OR `topic:`
@@ -20,6 +21,11 @@ Two measures, both over public, non-fork repos tagged with any of AI_TOPICS:
   overall top 1,000 is always among them. Only today's star counts exist, so
   this is a live snapshot that can't be backfilled.
 
+Releases (`iter_releases`) come from the REST releases listing, newest
+first, 100 a page through the `Link` header, drafts excluded. That's the core
+API, not search: 5,000 requests an hour with a token, 60 without, well
+within this client's search pacing.
+
 Rate limits: search allows 30 requests a minute with a token (`GITHUB_TOKEN`)
 and 10 without; the client keeps to 27 and 9. An exhausted limit is a 403
 (or 429) with `X-RateLimit-Remaining: 0`; the client waits until
@@ -32,7 +38,8 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from datetime import date, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from itertools import combinations
 from typing import Any, Self
 
@@ -52,6 +59,17 @@ TOP_N = 1000
 SEARCH_PAGE_SIZE = 100  # GitHub's maximum
 SEARCH_RESULT_CAP = 1000  # GitHub returns no results past the 1,000th
 INCOMPLETE_RETRIES = 3
+
+
+@dataclass(frozen=True)
+class Release:
+    repo: str  # 'owner/name'
+    tag: str
+    name: str | None
+    body: str
+    published_at: datetime
+    url: str
+    prerelease: bool
 
 
 class GitHubClient(BaseAPIClient):
@@ -129,6 +147,37 @@ class GitHubClient(BaseAPIClient):
             200,
             "github",
         )
+
+    def iter_releases(
+        self, repo: str, since: datetime | None = None
+    ) -> Iterator[Release]:
+        """Published releases of `repo`, newest first, stopping before `since`."""
+        url: str | None = f"repos/{repo}/releases"
+        params: dict[str, str] | None = {"per_page": str(SEARCH_PAGE_SIZE)}
+        while url:
+            resp = self._get(url, params)
+            try:
+                page = resp.json()
+            except ValueError:
+                raise SourceAPIError(
+                    f"Invalid JSON from github releases of {repo}", 200, self.SOURCE
+                ) from None
+            for r in page:
+                if r.get("draft") or not r.get("published_at"):
+                    continue
+                release = Release(
+                    repo=repo,
+                    tag=r["tag_name"],
+                    name=r.get("name") or None,
+                    body=r.get("body") or "",
+                    published_at=datetime.fromisoformat(r["published_at"]),
+                    url=r["html_url"],
+                    prerelease=bool(r.get("prerelease")),
+                )
+                if since is not None and release.published_at < since:
+                    return
+                yield release
+            url, params = resp.links.get("next", {}).get("url"), None
 
     def count_repos(self, query: str) -> int:
         return int(self.search_repositories(query)["total_count"])
