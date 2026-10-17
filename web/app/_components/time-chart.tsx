@@ -11,6 +11,14 @@ export type ChartPoint = {
   upper?: number | null;
 };
 
+export type ValueFormat = "count" | "percent" | "log10";
+
+function formatValue(v: number, format: ValueFormat): string {
+  if (format === "percent") return `${v.toFixed(1)}%`;
+  if (format === "log10") return v.toFixed(2);
+  return Math.round(v).toLocaleString("en-US");
+}
+
 export type ChartSeries = {
   id: string;
   label: string;
@@ -52,10 +60,17 @@ export function TimeChart({
   unit = "%",
   step = false,
   ariaLabel,
+  format,
 }: {
   series: ChartSeries[];
   splitDate?: string;
   unit?: string;
+  /**
+   * How every value is shown (axis, tooltip): counts with thousands
+   * separators, percent with one decimal, log10 with two. A name, not a
+   * function, so server components can pass it. Default: 2 decimals + unit.
+   */
+  format?: ValueFormat;
   step?: boolean;
   ariaLabel: string;
 }) {
@@ -236,8 +251,7 @@ export function TimeChart({
               dominantBaseline="middle"
               className="fill-muted text-[11px] tabular-nums"
             >
-              {t}
-              {unit}
+              {format ? formatValue(t, format) : `${t}${unit}`}
             </text>
           </g>
         ))}
@@ -373,13 +387,14 @@ export function TimeChart({
                 aria-hidden
               />
               <strong className="tabular-nums">
-                {p.value.toFixed(2)}
-                {unit}
+                {format ? formatValue(p.value, format) : `${p.value.toFixed(2)}${unit}`}
               </strong>
               <span className="text-muted">
                 {s.label}
                 {p.lower != null && p.upper != null && s.kind === "forecast"
-                  ? ` (${p.lower.toFixed(1)}–${p.upper.toFixed(1)})`
+                  ? format
+                    ? ` (${formatValue(p.lower, format)}–${formatValue(p.upper, format)})`
+                    : ` (${p.lower.toFixed(1)}–${p.upper.toFixed(1)})`
                   : ""}
               </span>
             </p>

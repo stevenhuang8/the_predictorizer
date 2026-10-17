@@ -27,6 +27,7 @@ const NAV = [
   { href: "/", label: "Overview" },
   { href: "/forecasts", label: "Forecasts" },
   { href: "/track-record", label: "Track record" },
+  { href: "/ai", label: "AI progress" },
 ] as const;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -55,7 +56,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10">{children}</main>
         <footer className="border-t border-line">
           <p className="mx-auto max-w-4xl px-4 py-4 text-xs text-muted">
-            Data: FRED / ALFRED vintages, as published at the time of each forecast.
+            Data: FRED / ALFRED vintages, as published at the time of each forecast. AI
+            progress: arXiv, Hugging Face, GitHub, Epoch AI and Polymarket.
           </p>
         </footer>
       </body>

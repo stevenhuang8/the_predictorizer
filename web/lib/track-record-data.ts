@@ -71,9 +71,16 @@ export type TrackRecord = {
 const RECENT = 15;
 const MISSES = 10;
 
-/** Scores, post-mortems and recent resolutions of live (not backtest) forecasts. */
-export async function loadTrackRecord(): Promise<TrackRecord> {
-  const scored = `NOT f.is_backtest AND f.scored_at IS NOT NULL`;
+export type Domain = "economy" | "ai";
+
+/**
+ * Scores, post-mortems and recent resolutions of live (not backtest) forecasts,
+ * for one domain (the economy by default; the AI section has its own loaders).
+ */
+export async function loadTrackRecord(
+  domain: Domain = "economy",
+): Promise<TrackRecord> {
+  const scored = `NOT f.is_backtest AND f.scored_at IS NOT NULL AND q.domain = $1`;
   const joins = `
     FROM forecasts f
     JOIN questions q ON q.id = f.question_id
@@ -83,13 +90,15 @@ export async function loadTrackRecord(): Promise<TrackRecord> {
   const [counts, numeric, fomc, categories, misses, recent] = await Promise.all([
     db().query<{ scored: number; open: number; first_open: string | null }>(
       `SELECT
-         (SELECT count(*)::int FROM forecasts f WHERE ${scored}) AS scored,
+         (SELECT count(*)::int FROM forecasts f JOIN questions q ON q.id = f.question_id
+          WHERE ${scored}) AS scored,
          count(DISTINCT q.id)::int AS open,
          min(q.target_date) AS first_open
        FROM questions q
        JOIN forecasts f ON f.question_id = q.id AND NOT f.is_backtest
        LEFT JOIN resolutions r ON r.question_id = q.id
-       WHERE r.id IS NULL`,
+       WHERE r.id IS NULL AND q.domain = $1`,
+      [domain],
     ),
     db().query<{
       target: NumericTarget;
@@ -113,6 +122,7 @@ export async function loadTrackRecord(): Promise<TrackRecord> {
        WHERE ${scored} AND q.target <> 'fomc_decision'
        GROUP BY 1, 2, 3
        ORDER BY 1, 2, 3`,
+      [domain],
     ),
     db().query<{
       horizon_months: number | null;
@@ -134,12 +144,15 @@ export async function loadTrackRecord(): Promise<TrackRecord> {
        WHERE ${scored} AND q.target = 'fomc_decision'
        GROUP BY 1, 2, 3
        ORDER BY q.lead_days NULLS LAST, q.horizon_months, m.model_type`,
+      [domain],
     ),
     db().query<{ category: MissCategory; n: number }>(
       `SELECT p.miss_category::text AS category, count(*)::int AS n
        FROM postmortems p JOIN forecasts f ON f.id = p.forecast_id
-       WHERE NOT f.is_backtest
+       JOIN questions q ON q.id = f.question_id
+       WHERE NOT f.is_backtest AND q.domain = $1
        GROUP BY 1`,
+      [domain],
     ),
     db().query<{
       forecast_id: number;
@@ -158,8 +171,10 @@ export async function loadTrackRecord(): Promise<TrackRecord> {
        JOIN questions q ON q.id = f.question_id
        JOIN model_versions m ON m.id = f.model_version_id
        WHERE NOT f.is_backtest AND p.miss_category <> 'expected_variance'
+         AND q.domain = $1
        ORDER BY q.target_date DESC, q.target, m.model_type
        LIMIT ${MISSES}`,
+      [domain],
     ),
     db().query<{
       forecast_id: number;
@@ -187,6 +202,7 @@ export async function loadTrackRecord(): Promise<TrackRecord> {
        ORDER BY r.actual_as_of DESC, q.target_date DESC, q.target, q.horizon_months,
                 m.model_type
        LIMIT ${RECENT}`,
+      [domain],
     ),
   ]);
 

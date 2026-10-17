@@ -30,6 +30,11 @@ export const TONES = {
     fill: "fill-series-magenta",
     bg: "bg-series-magenta",
   },
+  violet: {
+    stroke: "stroke-series-violet",
+    fill: "fill-series-violet",
+    bg: "bg-series-violet",
+  },
 } as const;
 
 export type Tone = keyof typeof TONES;

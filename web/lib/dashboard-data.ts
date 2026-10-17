@@ -76,7 +76,15 @@ function changes(points: Point[]): Point[] {
   );
 }
 
-export async function loadDashboard(today: Date): Promise<DashboardData> {
+/**
+ * The economy's open live forecasts and the history behind them. `domain`
+ * keeps the AI domain's questions (AI task 21) out of these queries; the AI
+ * section has its own loaders (`ai-dashboard-data.ts`).
+ */
+export async function loadDashboard(
+  today: Date,
+  domain: "economy" | "ai" = "economy",
+): Promise<DashboardData> {
   const since = monthsBefore(today, HISTORY_MONTHS);
   const cpiSince = monthsBefore(today, HISTORY_MONTHS + 12);
 
@@ -102,15 +110,20 @@ export async function loadDashboard(today: Date): Promise<DashboardData> {
      JOIN questions q ON q.id = f.question_id
      JOIN model_versions m ON m.id = f.model_version_id
      LEFT JOIN resolutions r ON r.question_id = q.id
-     WHERE NOT f.is_backtest AND r.id IS NULL
+     WHERE NOT f.is_backtest AND r.id IS NULL AND q.domain = $1
        AND f.forecast_date = (
          SELECT max(f2.forecast_date) FROM forecasts f2
          WHERE f2.question_id = q.id AND NOT f2.is_backtest)
      ORDER BY q.target_date, q.target, m.model_type`,
+    [domain],
   );
   const meta = db().query<{ data_through: string | null; last_run: string | null }>(
-    `SELECT (SELECT max(as_of) FROM observations)::date AS data_through,
-            (SELECT max(forecast_date) FROM forecasts WHERE NOT is_backtest) AS last_run`,
+    `SELECT (SELECT max(o.as_of) FROM observations o JOIN series s ON s.id = o.series_id
+             WHERE s.domain = $1)::date AS data_through,
+            (SELECT max(f.forecast_date) FROM forecasts f
+             JOIN questions q ON q.id = f.question_id
+             WHERE NOT f.is_backtest AND q.domain = $1) AS last_run`,
+    [domain],
   );
 
   const [rows, metaRows, cpi, unrate, fedUpper] = await Promise.all([
