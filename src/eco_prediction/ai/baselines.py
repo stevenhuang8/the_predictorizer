@@ -72,7 +72,13 @@ TOLERANCE = 1e-9  # relative, for comparing a value with a restated threshold
 
 
 def _bounded(kind: Kind, last: float, f: Forecast) -> Forecast:
-    """Clip a running maximum's forecast to [last, 100 if a percentage]."""
+    """Clip a running maximum's forecast to [last, 100 if a percentage], keeping
+    lower <= point <= upper.
+
+    Clipping each end on its own isn't enough: ARC-AGI-2 at 95% with large past
+    3-month gains had both ends of its interval clipped to 100 while the
+    no-change point stayed at 95, outside its own interval (AI_NOTES/Task24.md).
+    """
     if kind == "count":
         return f
     high = 100.0 if kind == "percent" else math.inf
@@ -81,7 +87,14 @@ def _bounded(kind: Kind, last: float, f: Forecast) -> Forecast:
         # float(): numpy floats can't be stored by psycopg2 (AI_NOTES/Task21.md)
         return None if x is None else float(min(max(x, last), high))
 
-    return Forecast(clip(f.point), clip(f.lower), clip(f.upper))  # type: ignore[arg-type]
+    point = clip(f.point)
+    assert point is not None
+    lower, upper = clip(f.lower), clip(f.upper)
+    return Forecast(
+        point,
+        None if lower is None else min(lower, point),
+        None if upper is None else max(upper, point),
+    )
 
 
 def _history(data: PointInTimeData) -> pd.Series:

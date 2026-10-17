@@ -40,7 +40,7 @@ from eco_prediction.ai.platform_store import (
 )
 from eco_prediction.ai.targets import AI_TARGETS, kind_of
 from eco_prediction.backtest.data import PointInTimeData, VintageStore
-from eco_prediction.backtest.harness import WalkForwardBacktest, summarize
+from eco_prediction.backtest.harness import Forecast, WalkForwardBacktest, summarize
 from eco_prediction.db.forecasts import get_or_create_question
 from eco_prediction.db.migrate import migrate
 from eco_prediction.db.resolutions import resolve_binary_question
@@ -340,3 +340,21 @@ def test_binary_questions_and_data_from_the_database(conn: Connection) -> None:
 
     data = BinaryData.from_db(conn)
     assert MarketPrice().predict_probability(c, data)["yes"] == pytest.approx(0.6)
+
+
+def test_a_running_max_point_stays_inside_its_interval() -> None:
+    """Regression: past gains bigger than the headroom left clipped both ends of
+    the random walk's interval to 100, above its no-change point (ARC-AGI-2 at 95%)."""
+    from eco_prediction.ai.baselines import _bounded
+
+    f = _bounded("percent", 95.0, Forecast(95.0, 101.0, 130.0))
+    assert f.lower == 95.0 <= f.point == 95.0 <= f.upper == 100.0
+    # The same holds through the model: big past jumps, 5 points of headroom.
+    values = [5.0, 5.0, 20.0, 20.0, 50.0, 50.0, 80.0, 80.0, 95.0]
+    s = VintageStore({GPQA: monthly(date(2025, 1, 1), values)})
+    data = PointInTimeData(s, AI_TARGETS[GPQA], date(2025, 10, 14))
+    model = AIRandomWalk()
+    model.fit(data)
+    f = model.predict(data, date(2026, 1, 1))
+    assert f.lower <= f.point <= f.upper  # type: ignore[operator]
+    assert f.point == 95.0 and f.upper == 100.0

@@ -3,7 +3,7 @@
 A forecasting system that makes **specific, scoreable predictions**, keeps an honest record of how they turned out, and explains why it was wrong when it misses. It covers two domains:
 
 - **US economy** (live): CPI inflation, unemployment and Fed rate decisions.
-- **Direction of AI** (in progress): research output, open-source activity, benchmark progress and compute, with an **LLM forecaster (Claude)** competing against the statistical and ML models under the same rules.
+- **Direction of AI** (live since 2026-10-16): research output, open-source activity, benchmark records, training compute and AI questions from Polymarket, with an **LLM forecaster (Claude)** competing against the statistical and ML models under the same rules.
 
 ### Ground rules (both domains)
 
@@ -18,15 +18,18 @@ A forecasting system that makes **specific, scoreable predictions**, keeps an ho
 ## How it works
 
 ```
- data sources ──▶ PostgreSQL ──▶ point-in-time ──▶ features ──▶ models ──▶ stored forecasts
- (every vintage,   observations    view of data                              (inputs, SHAP)
-  as_of dated)                                                                     │
-                                                                                   ▼
-        dashboard + CLI ◀── post-mortem: why did it miss? ◀── resolve + score against
-                                                              the first published value
+ economy: FRED / ALFRED ─┐                                      ┌─ baselines, ARIMA/ETS, LightGBM
+ AI: arXiv, HF, GitHub,  ├▶ PostgreSQL ──▶ point-in-time ──▶ features ─┤  (AI: + market price, base rates,
+     Epoch, Polymarket ──┘  (every vintage,   view of data             │   threshold classifier)
+ AI text corpus ────────────▶ retrieval ──▶ context bundle ──────────▶ └─ Claude (opt-in, budgeted)
+ (papers, model cards,         (published                                        │
+  releases, markets)            before the forecast)                              ▼
+                                                                         stored forecasts
+        dashboard + CLI ◀── post-mortem: why did it miss? ◀── resolve + score     (inputs, SHAP,
+                            (+ LLM-drafted note to confirm)                        rationales)
 ```
 
-A daily job (`scheduler/forecast_job.py`) refreshes data, resolves and scores due questions, classifies misses (bad data / bad model / regime change / bad luck), and makes the new month's forecasts.
+Two daily jobs, one per domain (`scheduler/forecast_job.py`, `ai/jobs/ai_forecast_job.py`), each under its own lock: refresh data, resolve and score due questions, classify misses (bad data / bad model / regime change / bad luck), and make the new forecasts.
 
 ---
 
@@ -76,30 +79,47 @@ Full report: `results/model_comparison.html` (regenerate with `uv run eco-foreca
 
 ---
 
-## AI domain (in progress)
+## AI domain forecasting
 
-The second domain is purely additive: the economy tables, jobs, CLI and dashboard keep their behavior, and a regression safety net (`tests/test_regression_safety.py`) fails if any economy test goes missing. Full spec: `.taskmaster/docs/prd_ai.md`.
+The second domain asks how fast AI is moving, under the same rules as the economy, and adds an **LLM forecaster (Claude)** that competes with the statistical and ML models. It is purely additive: the economy's tables, jobs, CLI and dashboard behave as before, and a regression safety net (`tests/test_regression_safety.py`) fails if any economy test goes missing. Spec: `.taskmaster/docs/prd_ai.md`; design and decisions: `NOTES/AI_DOMAIN.md`; per-task notes: `AI_NOTES/`.
 
-**Targets**
+**What is forecast**
 
-| Target | Source | Status |
+| Questions | Source | Asked |
 |---|---|---|
-| arXiv AI submissions (cs.AI + cs.LG + cs.CL, monthly) | arXiv API, from 2010 | ✅ Ingestion built |
-| Hugging Face new public models (monthly) | Hugging Face Hub API | ✅ Ingestion built |
-| GitHub AI activity (new repos monthly, stars snapshot) | GitHub Search API, from 2017 | ✅ Ingestion built |
-| Benchmark SOTA (GPQA Diamond, SWE-bench Verified, ARC-AGI-2; best so far, monthly) | Epoch AI | ✅ Ingestion built |
-| Largest training run (log10 FLOP, best so far, monthly) | Epoch AI | ✅ Ingestion built |
-| Numeric questions: each series above at 1/3/6 months (`question_key` = series id) | `ai/questions.py` | ✅ Generator built |
-| Binary threshold questions ("Will SWE-bench SOTA for 2027-01 be ≥ 87.6%?"), 3 per series and horizon | `ai/questions.py` | ✅ Generator built |
-| Curated binary questions: AI-progress Polymarket markets (benchmarks, rankings, releases) asked 7/30/90 days before close | `ai/curated_questions.py` | ✅ Loader built |
-| Market benchmark: AI-tagged Polymarket markets (≥ $10k traded) with daily prices | Polymarket Gamma + CLOB APIs | ✅ Ingestion built |
+| **Monthly counts**: arXiv AI papers (cs.AI/LG/CL), new Hugging Face models, new GitHub AI repos | arXiv, Hugging Face Hub and GitHub search APIs | value + 80% range, 1/3/6 months ahead |
+| **Records**: best GPQA Diamond, SWE-bench Verified and ARC-AGI-2 scores; largest training run (log10 FLOP) | Epoch AI | value + 80% range, 1/3/6 months ahead |
+| **Thresholds**: "Will arXiv AI papers be ≥ 12,400 in Nov 2026?" (+10/25/50%, or 25/50/75% of the gap to 100%, or 2/3/10x compute) | the same series | P(yes), 1/3/6 months ahead |
+| **Polymarket questions**: AI releases, benchmark records and model rankings (≥ $10k traded) | Polymarket | P(yes), 90, 30 and 7 days before the market closes |
 
-**What's different from the economy:**
-- **Reconstructed vintages are labeled.** AI sources don't keep revision history, so live pulls are snapshotted with `as_of` = fetch date, and backfills built from timestamped records (e.g., arXiv submission dates) are flagged `reconstructed = true`.
-- **Binary questions** resolve yes/no and are scored with the binary Brier score, (p − outcome)², plus log loss, calibration error and Murphy's decomposition, benchmarked against Polymarket prices (stored point-in-time in `platform_questions` / `platform_probabilities`). Metaculus is on hold: its API terms forbid evaluating AI models without written permission.
-- **The LLM forecaster** gets a point-in-time context bundle (question, recent values, stats-model forecasts, retrieved documents published before the forecast date) and returns structured JSON with a rationale. Its prompt, model ID and raw response are stored for every forecast. Backtests only use questions resolving after the model's training cutoff, so it can't recall the answer.
+**Models:** random walk, historical mean and linear trend (baselines); ARIMA and ETS on a log or "headroom to 100%" scale; LightGBM on 109 AI features (growth rates, records, cross-series signals), pooled across benchmarks; for yes/no questions, base rates, the market's own price and a LightGBM threshold classifier; and the **Claude forecaster**.
 
-**Roadmap:** foundation (safety net, migrations 009–010, `ai/` package) ✅ → data (arXiv, HF, GitHub, Epoch, Polymarket ✅; Metaculus pending permission) → questions (numeric, threshold and curated ✅), resolution and binary scoring ✅ → features ✅ → baselines ✅ → ARIMA/ETS ✅ → LightGBM → LLM forecaster, retrieval corpus and ensemble → live job, `--domain ai` CLI and dashboard section. Per-task notes are in `AI_NOTES/`.
+**The LLM forecaster** (`ai/llm/`): for each question it builds a point-in-time context bundle (the series' last 12 months, the baselines' forecasts, the market price, and documents retrieved from a dated corpus of arXiv abstracts, Hugging Face model cards, GitHub release notes and Polymarket questions, all published before the forecast) and asks `claude-opus-5-5` for structured JSON with a rationale first. Every call is logged to `llm_calls` with its prompt, response, tokens and cost; identical calls are reused, never paid for twice. Its backtest only uses forecasts made after the model's training data cutoff (June 2026), so it can't recall outcomes. An ensemble blends the LLM with the other models, with weights learned walk-forward.
+
+**Scoring:** numeric forecasts by error and relative RMSE; yes/no by the Brier score (0 perfect, 1 confidently wrong), calibration, and comparison with the Polymarket price on the same day. Misses get the economy's four post-mortem categories, and optionally an LLM-drafted explanation for a person to confirm. Metaculus is on hold: its API terms forbid evaluating AI models without written permission.
+
+**Success criteria and current performance:** the PRD's bar is that the LLM beats the base rate after its training cutoff (and the statistical models beat the random walk). Live AI forecasts began on 2026-10-16; the first numeric ones resolve in early December 2026, so there's no live track record yet. On synthetic data the models behave as designed (LightGBM 1,181 vs ARIMA 1,812 vs random walk 15,087 RMSE on a series with a cross-series lead; the threshold classifier's Brier 0.054 vs 0.254 for the base rate). The LLM hasn't been run: the post-cutoff backtest (588 forecasts) is built and estimated at about $44 on Opus 5.5 or $1.10 on Haiku 5.5, waiting on a budget decision.
+
+### Running it
+
+```sh
+uv run eco-forecast forecast --domain ai --target arxiv --horizon 3          # every model, now (not stored)
+uv run eco-forecast forecast --domain ai --target binary --question-id 2585  # one yes/no question
+uv run eco-forecast inspect --domain ai --kind curated --open                 # AI questions
+uv run eco-forecast scores --domain ai                                        # AI track record
+uv run eco-forecast ai-forecast --dry-run                                     # what the daily job would store
+uv run eco-forecast review-postmortems --domain ai                            # LLM-drafted notes to confirm
+```
+
+The dashboard's **AI progress** section (`/ai`) shows each series with every model's forecast, the open questions, each forecast with its rationale, and the track record against the market.
+
+### LLM cost management
+
+- **The LLM never runs unless asked:** the daily job forecasts with it only with `--llm MODEL --llm-budget USD`; post-mortem drafts only with `--draft --budget USD`; the backtest refuses to run without `--budget`. Each stops before the next call once new spending reaches its budget.
+- **Estimate before spending:** `uv run python -m eco_prediction.ai.llm.backtest --dry-run` counts the forecasts and prices them from the real prompts.
+- **Nothing is paid for twice:** a call whose model, prompt and parameters match an earlier successful one reuses it (`llm_calls.context_hash`), so re-runs are free.
+- **See what was spent:** `llm_calls` holds every call's tokens and cost (failed calls included); the dashboard and `eco-forecast scores --domain ai` show totals.
+- **Cheaper models:** `--model claude-haiku-5-5` costs about 1/40th of Opus 5.5 per forecast, with the same training cutoff.
 
 ---
 
@@ -107,11 +127,11 @@ The second domain is purely additive: the economy tables, jobs, CLI and dashboar
 
 | Layer | Tools |
 |---|---|
-| **Data and models** | Python 3.13, pandas, statsforecast (ARIMA/ETS), LightGBM, SHAP, scikit-learn, SciPy, matplotlib; Claude via the `anthropic` SDK (planned) |
-| **Database** | PostgreSQL 16 in Docker, psycopg2, hand-written SQL migrations |
+| **Data and models** | Python 3.13, pandas, statsforecast (ARIMA/ETS), LightGBM, SHAP, scikit-learn, SciPy, matplotlib; Claude (`claude-opus-5-5`) via the `anthropic` SDK |
+| **Database** | PostgreSQL 16 in Docker, psycopg2, hand-written SQL migrations; Postgres full-text search for the retrieval corpus |
 | **Data sources** | FRED / ALFRED; arXiv, Hugging Face Hub, GitHub, Epoch AI, Polymarket |
 | **Frontend** | Next.js 16, TypeScript, Tailwind CSS 4 |
-| **Tooling** | uv, pytest (400+ tests), ruff, mypy; launchd + Postgres advisory lock for the daily job |
+| **Tooling** | uv, pytest (680+ tests; 95% coverage of the AI modules), ruff, mypy; launchd + Postgres advisory locks for the daily jobs |
 
 ## Project layout
 
@@ -119,7 +139,9 @@ The second domain is purely additive: the economy tables, jobs, CLI and dashboar
 eco_prediction/
 ├── src/eco_prediction/
 │   ├── data/          # FRED client, ingestion, FOMC calendar + decision labels
-│   ├── ai/            # AI domain: sources/ (arXiv, HF, GitHub, Epoch, Polymarket clients), ingestion
+│   ├── ai/            # AI domain: sources/ (API clients), ingestion, questions, features, models,
+│   │   ├── llm/       #   Claude forecaster, retrieval corpus, call log, LLM backtest, ensemble, report
+│   │   └── jobs/      #   daily AI forecast job + resolution job
 │   ├── db/            # connection pool, migration runner, per-table helpers
 │   ├── backtest/      # point-in-time views, walk-forward harness, metrics
 │   ├── features/      # economy feature pipeline
@@ -127,19 +149,22 @@ eco_prediction/
 │   ├── scheduler/     # daily forecast job + resolution/scoring job
 │   ├── postmortem/    # classifies each miss
 │   └── cli.py         # `eco-forecast` command
-├── migrations/        # numbered SQL migrations (001–011)
-├── tests/  results/  web/
+├── migrations/        # numbered SQL migrations (001–016)
+├── deploy/launchd/    # the two daily jobs' launch agents
+├── tests/  results/  web/         # web/app/ai: the dashboard's AI section
 ├── NOTES/             # economy task notes
 └── AI_NOTES/          # AI domain task notes
 ```
 
-Key tables: `observations` (every vintage: `series, period, as_of, value, reconstructed`), `questions` (now with `domain` and binary questions), `forecasts`, `model_versions`, `feature_snapshots`, `resolutions`, `postmortems`.
+Key tables: `observations` (every vintage: `series, period, as_of, value, reconstructed`), `questions` (with `domain`, binary questions and Polymarket links), `forecasts`, `model_versions`, `feature_snapshots`, `resolutions`, `postmortems` (with LLM drafts); for the AI domain also `platform_questions` / `platform_probabilities` (Polymarket), `retrieval_documents` (the dated corpus) and `llm_calls` (every LLM call, its tokens and cost).
 
 ---
 
 ## Getting started
 
-**Prerequisites:** Docker (or OrbStack), [uv](https://docs.astral.sh/uv/), Node.js, a free [FRED API key](https://fredaccount.stlouisfed.org/apikeys), and on macOS `brew install libomp`. The AI ingestion runs without any keys; adding `GITHUB_TOKEN` or `HF_TOKEN` to `.env` only raises rate limits.
+**Prerequisites:** Docker (or OrbStack), [uv](https://docs.astral.sh/uv/), Node.js, a free [FRED API key](https://fredaccount.stlouisfed.org/apikeys), and on macOS `brew install libomp`.
+
+**AI keys (all optional):** the AI ingestion runs without keys; `GITHUB_TOKEN` and `HF_TOKEN` in `.env` raise rate limits (a free Hugging Face token doubles them, and makes the first backfill much faster). `ANTHROPIC_API_KEY` in `.env.local` is only needed to run the LLM, which never happens unless you ask for it with a budget (see *LLM cost management*).
 
 ```sh
 # 1. Configure and start the database
@@ -164,13 +189,22 @@ uv run python -m eco_prediction.ai.ingest_github --backfill
 uv run python -m eco_prediction.ai.ingest_github stars   # monthly stars snapshot
 uv run python -m eco_prediction.ai.ingest_epoch --backfill   # benchmark SOTA + compute
 uv run python -m eco_prediction.ai.ingest_polymarket         # markets + daily prices (run daily)
-uv run python -m eco_prediction.ai.questions                 # numeric, threshold + curated questions (run daily)
+uv run python -m eco_prediction.ai.llm.build_corpus          # text for the LLM (~1.5 h the first time)
 
-# 5. Daily pipeline (by hand, or at 09:00 via launchd) and dashboard
+# 5. Daily pipelines (by hand, or via launchd at 09:00 and 09:30) and dashboard
 uv run python -m eco_prediction.scheduler.forecast_job --once-per-month
-cp deploy/launchd/com.eco-prediction.forecast-job.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.eco-prediction.forecast-job.plist
-cd web && cp .env.local.example .env.local && npm install && npm run dev   # localhost:3000
+uv run python -m eco_prediction.ai.jobs.ai_forecast_job --dry-run           # check first: writes nothing
+uv run python -m eco_prediction.ai.jobs.ai_forecast_job --once-per-month    # questions + forecasts, no LLM
+for job in forecast-job ai-forecast-job; do
+  cp deploy/launchd/com.eco-prediction.$job.plist ~/Library/LaunchAgents/
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.eco-prediction.$job.plist
+done
+cd web && cp .env.local.example .env.local && npm install && npm run dev   # localhost:3000, /ai
+
+# 6. The LLM (optional, costs money): estimate, then run with a budget
+uv run python -m eco_prediction.ai.llm.backtest --dry-run
+uv run python -m eco_prediction.ai.llm.backtest --model claude-haiku-5-5 --budget 3
+uv run python -m eco_prediction.ai.llm.comparison_report      # results/llm_comparison.html
 ```
 
 Checks: `uv run pytest`, `uv run ruff check src`, `uv run mypy src`.
@@ -189,10 +223,14 @@ Checks: `uv run pytest`, `uv run ruff check src`, `uv run mypy src`.
 | Only the scheduled job writes forecasts | One source of truth for the track record | Manual CLI forecasts aren't saved |
 | AI domain is additive, guarded by a safety net | The live economy pipeline can't regress | Some shared code needs guarded, economy-default branches |
 | LLM backtests only after its training cutoff | The model may have memorized earlier outcomes | A smaller LLM evaluation set |
+| The LLM is opt-in, capped by a budget, and reuses identical calls | Spending is a decision, never a side effect | Its forecasts wait until someone runs it |
+| AI questions resolve to the first *live* value | Backfilled history is reconstructed with hindsight | The first scores arrive a month after live pulls start |
 
 ## Known limitations
 
 - LightGBM doesn't yet beat the random walk on 3-month inflation; dropping the time-trend feature looked promising in a quick test.
 - Ranges are too narrow in turbulent periods; conformal recalibration isn't in the live job yet.
 - ALFRED's archive starts 2009–2011 for several series, so early backtests have fewer features.
-- Live economy forecasts began in October 2026 and none have resolved yet. The AI domain has no forecasts yet.
+- Live economy forecasts began in October 2026 and none have resolved yet. Live AI forecasts began on 2026-10-16; the first resolve in early December 2026.
+- The LLM forecaster hasn't been run on real questions: its backtest and live use wait on a budget decision.
+- AI history is reconstructed (backfilled with hindsight): GitHub counts repos by their topics today, Hugging Face counts only models not since deleted, and late benchmark evaluations are dated as if known at the time.

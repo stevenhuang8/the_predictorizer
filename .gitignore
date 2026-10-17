@@ -50,3 +50,6 @@ web/node_modules/
 
 # Database backups (pg_dump), e.g. before a migration
 backups/
+
+# pytest-cov data
+.coverage
