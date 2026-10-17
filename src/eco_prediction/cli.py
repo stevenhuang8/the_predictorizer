@@ -13,6 +13,19 @@ Usage:
     uv run eco-forecast ai-resolve [--include-backtest ...]    # the AI resolution job
     uv run eco-forecast review-postmortems --domain ai [--confirm ID | --reject ID]   # LLM drafts
 
+Every command but the jobs takes `--domain economy` (the default) or
+`--domain ai`, the AI-progress forecasts (`ai/cli_ai.py`):
+
+    uv run eco-forecast forecast --domain ai --target arxiv --horizon 3
+    uv run eco-forecast forecast --domain ai --target binary --question-id 2585
+    uv run eco-forecast inspect --domain ai [--kind curated] [--open] [--limit 50]
+    uv run eco-forecast scores --domain ai
+    uv run eco-forecast backtest --domain ai                   # the LLM comparison report
+
+AI --targets: arxiv, hf, github (monthly counts), gpqa, swebench, arc2
+(benchmark records, %), flops (largest training run, log10 FLOP), and binary
+(one yes/no question, by --question-id).
+
 `forecast` only displays: it refits the models on the data in the database
 and prints what they predict now, without storing anything. The daily job
 (`scheduler.forecast_job`) is what records live forecasts, so a manual run
@@ -26,6 +39,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 from datetime import date, timedelta
+from typing import Any
 
 import pandas as pd
 from psycopg2.extensions import connection as Connection
@@ -50,6 +64,11 @@ TARGET_NAMES = {
     "fomc": "fomc_decision",
 }
 SHAP_TOP = 5
+DOMAINS = ("economy", "ai")
+# Mirrors ai.cli_ai (imported lazily so economy commands don't load the AI stack).
+AI_TARGET_NAMES = ("arxiv", "hf", "github", "gpqa", "swebench", "arc2", "flops")
+AI_KINDS = ("numeric", "threshold", "curated")
+AI_LIST_LIMIT = 50
 
 
 def _models(
@@ -153,7 +172,8 @@ def forecast_fomc(
     )
 
 
-def list_questions(conn: Connection) -> str:
+def list_questions(conn: Connection, domain: str = "economy") -> str:
+    """The domain's questions (economy by default; `ai/cli_ai.py` lists AI ones)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -165,9 +185,11 @@ def list_questions(conn: Connection) -> str:
             FROM questions q
             LEFT JOIN forecasts f ON f.question_id = q.id
             LEFT JOIN resolutions r ON r.question_id = q.id
+            WHERE q.domain = %s
             GROUP BY q.id, r.actual_value, r.actual_outcome
             ORDER BY q.target_date, q.target, q.id
-            """
+            """,
+            (domain,),
         )
         rows = cur.fetchall()
     if not rows:
@@ -192,7 +214,8 @@ def inspect_question(conn: Connection, question_id: int) -> str:
         cur.execute(
             """
             SELECT q.target::text, q.target_date, q.horizon_months, q.lead_days,
-                   q.resolution_rule, r.actual_value, r.actual_outcome, r.actual_as_of
+                   q.resolution_rule, r.actual_value, r.actual_outcome, r.actual_as_of,
+                   q.question_key, q.question_text
             FROM questions q LEFT JOIN resolutions r ON r.question_id = q.id
             WHERE q.id = %s
             """,
@@ -215,7 +238,18 @@ def inspect_question(conn: Connection, question_id: int) -> str:
             (question_id,),
         )
         forecasts = cur.fetchall()
-    target, target_date, horizon, lead, rule, value, outcome, actual_as_of = question
+    (
+        target,
+        target_date,
+        horizon,
+        lead,
+        rule,
+        value,
+        outcome,
+        actual_as_of,
+        key,
+        text,
+    ) = question
     when = f"{horizon} months ahead" if horizon is not None else f"{lead} days before"
     if value is None and outcome is None:
         status = "open"
@@ -224,6 +258,8 @@ def inspect_question(conn: Connection, question_id: int) -> str:
         status = f"resolved: {answer} (published {actual_as_of})"
     lines = [
         f"Question {question_id}: {target} for {target_date}, {when}",
+        *([f"Key: {key}"] if key else []),
+        *([f"Text: {text}"] if text else []),
         f"Rule: {rule}" if rule else "",
         f"Status: {status}",
         "",
@@ -267,16 +303,61 @@ def inspect_question(conn: Connection, question_id: int) -> str:
     return "\n".join(line for line in lines if line is not None)
 
 
+def _domain(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--domain",
+        choices=DOMAINS,
+        default="economy",
+        help="economy (default) or ai, the AI-progress forecasts",
+    )
+
+
+def _pop_domain(extra: list[str]) -> tuple[str, list[str]]:
+    """--domain out of a pass-through command's arguments (`backtest`)."""
+    rest, domain, args = [], "economy", iter(extra)
+    for a in args:
+        if a == "--domain":
+            domain = next(args, "")
+        elif a.startswith("--domain="):
+            domain = a.split("=", 1)[1]
+        else:
+            rest.append(a)
+    if domain not in DOMAINS:
+        raise SystemExit(f"error: --domain must be one of {', '.join(DOMAINS)}")
+    return domain, rest
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="eco-forecast", description="Generate and inspect forecasts by hand."
+        prog="eco-forecast",
+        description=(
+            "Generate and inspect forecasts by hand. --domain ai (on forecast, "
+            "inspect, scores and backtest) switches to the AI-progress forecasts; "
+            "ai-forecast and ai-resolve run the AI jobs."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     f = sub.add_parser("forecast", help="show every model's forecast now (not stored)")
-    f.add_argument("--target", choices=sorted(TARGET_NAMES), required=True)
+    _domain(f)
     f.add_argument(
-        "--horizon", type=int, default=3, help="months ahead (cpi, unemployment)"
+        "--target",
+        required=True,
+        metavar="TARGET",
+        # Any target of either domain; main() checks it matches --domain.
+        choices=[*sorted(TARGET_NAMES), *AI_TARGET_NAMES, "binary"],
+        help=(
+            "economy: " + ", ".join(sorted(TARGET_NAMES)) + "; ai: "
+            + ", ".join([*AI_TARGET_NAMES, "binary"])
+        ),
+    )  # fmt: skip
+    f.add_argument(
+        "--horizon", type=int, default=3, help="months ahead (numeric targets)"
+    )
+    f.add_argument(
+        "--question-id",
+        type=int,
+        help="the yes/no question (--domain ai --target binary)",
     )
     f.add_argument(
         "--meeting", type=date.fromisoformat, help="FOMC decision day (fomc)"
@@ -289,14 +370,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     i = sub.add_parser("inspect", help="list questions, or show one in detail")
+    _domain(i)
     i.add_argument("--question-id", type=int)
+    i.add_argument("--kind", choices=AI_KINDS, help="ai: only this kind of question")
+    i.add_argument("--open", action="store_true", help="ai: only unresolved questions")
+    i.add_argument("--limit", type=int, default=AI_LIST_LIMIT, help="ai: rows to show")
 
     s = sub.add_parser("scores", help="accuracy by target, horizon and model")
+    _domain(s)
     s.add_argument("--include-backtest", action="store_true")
 
     sub.add_parser(
         "backtest",
-        help="run the model comparison report (Task 19); options pass through",
+        help=(
+            "run the model comparison report (Task 19), or with --domain ai the "
+            "LLM comparison report; options pass through"
+        ),
         add_help=False,  # so `backtest --help` shows the comparison's options
     )
     for name, text in (
@@ -320,6 +409,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "backtest":
         # Everything after `backtest` goes to the comparison script as is.
+        domain, extra = _pop_domain(extra)
+        if domain == "ai":
+            from eco_prediction.ai.llm.comparison_report import main as llm_report
+
+            return llm_report(extra)
         from eco_prediction.scripts.model_comparison import main as comparison
 
         return comparison(extra)
@@ -340,7 +434,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from eco_prediction.db.connection import connection
 
+    if getattr(args, "domain", "economy") == "ai":
+        return _main_ai(args, connection)
     if args.command == "forecast":
+        if args.target not in TARGET_NAMES:
+            raise SystemExit(
+                f"error: --target {args.target!r} isn't an economy target "
+                f"({', '.join(sorted(TARGET_NAMES))}); add --domain ai for AI targets"
+            )
         if args.horizon < 1:
             raise SystemExit("error: --horizon must be at least 1")
         store = VintageStore.from_db(backfill=True, release_lags=RELEASE_LAGS)
@@ -373,6 +474,41 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if summary.empty
                 else summary.round(3).to_string(index=False)
             )
+    return 0
+
+
+def _main_ai(args: argparse.Namespace, connection: Any) -> int:
+    """`forecast`, `inspect` and `scores` with --domain ai."""
+    from eco_prediction.ai import cli_ai
+
+    with connection() as conn:
+        if args.command == "forecast":
+            as_of = args.date or today()
+            if args.target == "binary":
+                if args.question_id is None:
+                    raise SystemExit("error: --target binary needs --question-id")
+                print(cli_ai.forecast_ai_binary(conn, args.question_id, as_of,
+                                                model=args.model))  # fmt: skip
+            elif args.target in cli_ai.AI_TARGET_NAMES:
+                print(cli_ai.forecast_ai_numeric(
+                    cli_ai.ai_store(conn), cli_ai.AI_TARGET_NAMES[args.target],
+                    args.horizon, as_of, model=args.model,
+                ))  # fmt: skip
+            else:
+                names = ", ".join([*cli_ai.AI_TARGET_NAMES, "binary"])
+                raise SystemExit(
+                    f"error: --target {args.target!r} isn't an AI target ({names})"
+                )
+        elif args.command == "inspect":
+            print(
+                cli_ai.list_ai_questions(
+                    conn, kind=args.kind, open_only=args.open, limit=args.limit
+                )
+                if args.question_id is None
+                else inspect_question(conn, args.question_id)
+            )
+        elif args.command == "scores":
+            print(cli_ai.ai_scores(conn, include_backtest=args.include_backtest))
     return 0
 
 
