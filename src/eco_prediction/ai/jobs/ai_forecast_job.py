@@ -14,8 +14,10 @@ instructions are in the plist.
 Each run, under its own advisory lock (`LOCK_KEY`, not the economy job's, so
 the two never block each other):
 
-1. **Resolves** AI questions answered by now and scores their forecasts
-   (`ai/resolutions.py`); `--no-resolve` skips it.
+1. **Resolves** AI questions answered by now, scores their forecasts
+   (`ai/resolutions.py`) and classifies why each missed (`ai/postmortems.py`,
+   rule-based; LLM drafts are a separate opt-in command); `--no-resolve`
+   skips all three.
 2. **Refreshes data** with each source's live ingest (arXiv, Hugging Face,
    GitHub counts and stars, Epoch, Polymarket); `--no-ingest` skips it. A
    failing source is logged and the run carries on with what's stored.
@@ -85,6 +87,7 @@ from eco_prediction.ai.llm.claude_forecaster import (
     register_prompt_version,
 )
 from eco_prediction.ai.llm.context import build_context_bundle, load_question
+from eco_prediction.ai.postmortems import run_ai_postmortems
 from eco_prediction.ai.questions import (
     generate_numeric_questions,
     generate_threshold_binary_questions,
@@ -662,6 +665,11 @@ def main(
                     resolved = resolve_and_score_ai(conn, now)
                     log.info("Resolved %d AI questions (%d still open), scored %d forecasts",
                              resolved.resolved, resolved.still_open, resolved.scored)  # fmt: skip
+                    # Post-mortem categories: rule-based, free. LLM drafts are a
+                    # separate, opt-in command (ai/postmortems.py --draft).
+                    pm = run_ai_postmortems(conn, now)
+                    log.info("Post-mortems: %d classified %s", pm.classified,
+                             dict(pm.by_category) or "")  # fmt: skip
                     if not args.dry_run:
                         conn.commit()
                 llm = ClaudeForecaster(args.llm, conn=conn) if args.llm else None

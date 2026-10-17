@@ -56,9 +56,9 @@ import hashlib
 import json
 import math
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -366,12 +366,14 @@ class ClaudeForecaster:
             raise ValueError("a numeric question; use predict_numeric")
         return self._forecast("binary", question, context_bundle, BINARY_SCHEMA)
 
-    def request(self, prompt: str, schema: Mapping[str, Any]) -> dict[str, Any]:
+    def request(
+        self, prompt: str, schema: Mapping[str, Any], system: str = SYSTEM_PROMPT
+    ) -> dict[str, Any]:
         """The Messages API request body (without `betas`)."""
         body: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "system": SYSTEM_PROMPT,
+            "system": system,
             "messages": [{"role": "user", "content": prompt}],
             "thinking": {"type": "adaptive"},
             "output_config": {
@@ -390,15 +392,37 @@ class ClaudeForecaster:
         bundle: ContextBundle,
         schema: Mapping[str, Any],
     ) -> dict[str, Any]:
-        prompt = build_prompt(bundle)
-        body = self.request(prompt, schema)
+        return self.complete(
+            build_prompt(bundle),
+            schema,
+            lambda parsed: _validate(kind, parsed),
+            question_id=question.id,
+            as_of_date=bundle.as_of_date,
+        )
+
+    def complete(
+        self,
+        prompt: str,
+        schema: Mapping[str, Any],
+        validate: Callable[[Any], dict[str, Any]],
+        *,
+        system: str = SYSTEM_PROMPT,
+        prompt_version: str = PROMPT_VERSION,
+        question_id: int | None = None,
+        as_of_date: date | None = None,
+    ) -> dict[str, Any]:
+        """One structured call, logged and reused like a forecast (see the
+        module docstring). `validate` turns the parsed JSON into the result,
+        raising ValueError or TypeError if it's unusable. The post-mortem
+        drafts (`ai/postmortems.py`) use it with their own prompt."""
+        body = self.request(prompt, schema, system)
         params = {k: v for k, v in body.items() if k not in ("model", "messages")}
         key = context_hash(
-            self.model, prompt, {**params, "prompt_version": PROMPT_VERSION}
+            self.model, prompt, {**params, "prompt_version": prompt_version}
         )
         base = LLMCall(
-            self.model, prompt, context_hash=key, prompt_version=PROMPT_VERSION,
-            as_of_date=bundle.as_of_date, question_id=question.id,
+            self.model, prompt, context_hash=key, prompt_version=prompt_version,
+            as_of_date=as_of_date, question_id=question_id,
         )  # fmt: skip
 
         if self.conn is not None and self.reuse:
@@ -438,7 +462,7 @@ class ClaudeForecaster:
             call_id = self._log(base, error="max_tokens: reply truncated", **logged)
             raise ForecastError("the reply hit max_tokens", call_id=call_id)
         try:
-            parsed = _validate(kind, json.loads(text))
+            parsed = validate(json.loads(text))
         except (ValueError, TypeError) as exc:
             call_id = self._log(base, error=f"malformed reply: {exc}", **logged)
             raise ForecastError(f"malformed reply: {exc}", call_id=call_id) from exc
