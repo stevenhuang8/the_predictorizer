@@ -19,6 +19,11 @@ after its cutoff. The model is refit on the first forecast date and then every
 `retrain_frequency`. Its training view covers all history ("expanding", from
 `train_start` if given) or only the last `window_months` ("rolling").
 
+`model_training_cutoff` is for models that may have memorized history (an
+LLM): forecast dates before it are skipped, so the model never forecasts a
+period it could have read about in training. Run other models with the same
+cutoff to compare them on that same, smaller window.
+
 Each forecast is scored against the actual value. By default that is the
 first release, the number a forecaster would have been judged on at the time.
 `resolve_with="latest"` scores against the latest vintage instead. Forecasts
@@ -90,6 +95,7 @@ class WalkForwardBacktest:
         train_start: date | None = None,
         resolve_with: Resolution = "first_release",
         store: VintageStore | None = None,
+        model_training_cutoff: date | None = None,
     ) -> None:
         if end_date < start_date:
             raise ValueError("end_date is before start_date")
@@ -109,11 +115,14 @@ class WalkForwardBacktest:
         self.train_start = train_start
         self.resolve_with = resolve_with
         self.store = store or VintageStore.from_db()
+        self.model_training_cutoff = model_training_cutoff
 
     def get_forecast_dates(self) -> list[date]:
-        """First of each month in [start_date, end_date]."""
-        first = month_start(self.start_date)
-        if first < self.start_date:
+        """First of each month in [start_date, end_date], none before the
+        model's training cutoff."""
+        start = max(self.start_date, self.model_training_cutoff or self.start_date)
+        first = month_start(start)
+        if first < start:
             first = add_months(first, 1)
         dates = []
         while first <= self.end_date:
