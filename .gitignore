@@ -41,6 +41,8 @@ postgres-data/
 # Downloaded benchmark data
 data/cache/
 results/cache/
+# Raw LLM backtest runs (prompts, rationales); the report itself is tracked
+results/llm_backtest/
 
 # Next.js frontend (web/.gitignore covers these too)
 web/.next/

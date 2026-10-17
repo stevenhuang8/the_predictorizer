@@ -36,6 +36,10 @@ run before the next call once new spending reaches it (`BudgetExceeded`; the
 forecasts made so far are kept). `--dry-run` counts the forecasts and
 estimates cost from prompt length without calling the API.
 
+**Results** of a real run are pickled to `results/llm_backtest/<model>.pkl`
+(`save_result`, `load_results`) for the comparison report
+(`ai/llm/comparison_report.py`), so a report never re-runs the backtest.
+
 **Saving.** With `save=True` each binary LLM forecast is stored in
 `forecasts` as a backtest (`is_backtest`) under the forecaster's model
 version, linked to its call. Numeric backtest targets aren't questions in
@@ -48,11 +52,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import pickle
 import re
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -109,6 +115,7 @@ TRAINING_CUTOFFS: dict[str, date] = {
 # For --dry-run estimates: output plus thinking tokens per call, a guess until
 # real calls are logged (then use their mean from llm_calls).
 ESTIMATED_OUTPUT_TOKENS = 3000
+RESULTS_DIR = Path("results/llm_backtest")
 
 __all__ = [
     "TRAINING_CUTOFFS",
@@ -219,7 +226,9 @@ def _binary_rows(
     for eq in questions:
         q = eq.question
         base = {"question_id": q.id, "ask_date": q.ask_date, "outcome": q.outcome,
-                "resolved_at": eq.resolved_at, "category": q.category}  # fmt: skip
+                "resolved_at": eq.resolved_at, "category": q.category, "title": q.title,
+                "market_id": q.platform_question_id,
+                "lead_days": (q.target_date - q.ask_date).days}  # fmt: skip
         for name, model in (
             ("market", MarketPrice()),
             ("base_rate", CuratedBaseRate()),
@@ -243,7 +252,8 @@ def _binary_rows(
             continue
         budget.record(result)
         rows.append({**base, "component": "llm", "p_yes": result["probability"],
-                     "call_id": result.get("call_id"), "cost_usd": result.get("cost_usd")})  # fmt: skip
+                     "call_id": result.get("call_id"), "cost_usd": result.get("cost_usd"),
+                     "rationale": result.get("rationale")})  # fmt: skip
         if save and version is not None and q.id is not None:
             forecast_id = _save_once(conn, q.id, version, q.ask_date, result)
             if forecast_id is not None and result.get("call_id"):
@@ -557,6 +567,26 @@ def _rmse_table(numeric: pd.DataFrame, ens: pd.DataFrame) -> dict[str, Any]:
     return table
 
 
+def save_result(result: LLMBacktestResult, out_dir: Path = RESULTS_DIR) -> Path:
+    """Pickle a run for the comparison report: one file per model, the latest wins."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{result.model}.pkl"
+    with path.open("wb") as f:
+        pickle.dump(result, f)
+    return path
+
+
+def load_results(out_dir: Path = RESULTS_DIR) -> list[LLMBacktestResult]:
+    """Every saved run in `out_dir`, by model name."""
+    if not out_dir.exists():
+        return []
+    results = []
+    for path in sorted(out_dir.glob("*.pkl")):
+        with path.open("rb") as f:
+            results.append(pickle.load(f))
+    return results
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Backtest the Claude forecaster after its training cutoff."
@@ -570,6 +600,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--binary-only", action="store_true")
     parser.add_argument("--numeric-only", action="store_true")
     parser.add_argument("--no-save", action="store_true")
+    parser.add_argument(
+        "--out", type=Path, default=RESULTS_DIR,
+        help=f"where to save the results for the report (default {RESULTS_DIR})",
+    )  # fmt: skip
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -588,6 +622,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    if not args.dry_run:
+        path = save_result(result, args.out)
+        print(f"saved {path}", file=sys.stderr)
     print(json.dumps(result.summary, indent=2, default=str))
     return 0
 
