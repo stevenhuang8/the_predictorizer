@@ -9,6 +9,8 @@ Usage:
     uv run eco-forecast inspect --question-id 3                # forecasts, scores, post-mortems
     uv run eco-forecast scores [--include-backtest]            # the live scorecard
     uv run eco-forecast backtest [--refresh] [--start ...]     # Task 19's model comparison
+    uv run eco-forecast ai-forecast [--once-per-month ...]     # the AI forecast job (AI task 21)
+    uv run eco-forecast ai-resolve [--include-backtest ...]    # the AI resolution job
 
 `forecast` only displays: it refits the models on the data in the database
 and prints what they predict now, without storing anything. The daily job
@@ -296,6 +298,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the model comparison report (Task 19); options pass through",
         add_help=False,  # so `backtest --help` shows the comparison's options
     )
+    for name, text in (
+        ("ai-forecast", "run the AI forecast job (AI task 21); options pass through"),
+        (
+            "ai-resolve",
+            "run the AI resolution job and print its scores; options pass through",
+        ),
+    ):
+        sub.add_parser(name, help=text, add_help=False)
     return parser
 
 
@@ -308,6 +318,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         from eco_prediction.scripts.model_comparison import main as comparison
 
         return comparison(extra)
+    if args.command == "ai-forecast":
+        from eco_prediction.ai.jobs.ai_forecast_job import main as ai_forecast
+
+        return ai_forecast(extra)
+    if args.command == "ai-resolve":
+        from eco_prediction.ai.jobs.ai_resolution_job import main as ai_resolve
+
+        return ai_resolve(extra)
     if extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
 

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The daily AI forecast job (AI task 21), run by launchd like the economy's
+  com.eco-prediction.forecast-job, half an hour after it. The two jobs hold
+  different advisory locks, so they never block each other; the stagger only
+  keeps their logs apart.
+
+  Each run resolves and scores answered AI questions, refreshes the AI data
+  (arXiv, Hugging Face, GitHub, Epoch, Polymarket), creates questions and
+  forecasts them. With the once-per-month option the numeric forecasts are made once a
+  month; binary questions are forecast on their ask dates. The LLM is not run
+  (it needs the llm and llm-budget options, which aren't set here).
+
+  As with the economy job, launchd runs a StartCalendarInterval job missed
+  while the Mac was asleep as soon as it wakes (several missed days coalesce
+  into one run), but not one missed while it was shut down.
+
+  Install or update:
+    cp deploy/launchd/com.eco-prediction.ai-forecast-job.plist ~/Library/LaunchAgents/
+    launchctl bootout gui/$(id -u)/com.eco-prediction.ai-forecast-job 2>/dev/null
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.eco-prediction.ai-forecast-job.plist
+  Run now:   launchctl kickstart gui/$(id -u)/com.eco-prediction.ai-forecast-job
+  Status:    launchctl print gui/$(id -u)/com.eco-prediction.ai-forecast-job
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.eco-prediction.ai-forecast-job</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/uv</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>eco_prediction.ai.jobs.ai_forecast_job</string>
+        <string>--once-per-month</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/stevenhuang/dev/AI_Projects/eco_prediction</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/stevenhuang/dev/AI_Projects/eco_prediction/logs/launchd-ai.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/stevenhuang/dev/AI_Projects/eco_prediction/logs/launchd-ai.log</string>
+</dict>
+</plist>

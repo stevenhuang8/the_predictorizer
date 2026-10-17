@@ -78,7 +78,8 @@ def _bounded(kind: Kind, last: float, f: Forecast) -> Forecast:
     high = 100.0 if kind == "percent" else math.inf
 
     def clip(x: float | None) -> float | None:
-        return None if x is None else min(max(x, last), high)
+        # float(): numpy floats can't be stored by psycopg2 (AI_NOTES/Task21.md)
+        return None if x is None else float(min(max(x, last), high))
 
     return Forecast(clip(f.point), clip(f.lower), clip(f.upper))  # type: ignore[arg-type]
 
@@ -246,7 +247,10 @@ def binary_questions(conn: Connection) -> list[BinaryQuestion]:
             """
             SELECT q.id, q.question_key, q.target_date, q.horizon_months,
                    q.lead_days, q.platform_question_id, q.question_text,
-                   q.created_at::date, r.actual_outcome
+                   -- The jobs' clock is US Eastern; evening creations are a
+                   -- day later in UTC (AI_NOTES/Task21.md).
+                   (q.created_at AT TIME ZONE 'America/New_York')::date,
+                   r.actual_outcome
             FROM questions q LEFT JOIN resolutions r ON r.question_id = q.id
             WHERE q.question_type = 'binary'
             ORDER BY q.target_date, q.id
